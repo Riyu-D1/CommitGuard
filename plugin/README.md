@@ -1,8 +1,8 @@
 # CommitGuard Plugin — Lightfern Mac app
 
-Owner: **Person 1**. All logic lives in the backend (`http://localhost:8000`) —
+Owner: **Riyansh**. All logic lives in the backend (`http://localhost:8000`) —
 this plugin is a thin client. See `CONTRACT.md` for API shapes and
-`team/person-1-plugin/PROMPTS.md` for the build prompts.
+`team/riyansh/PROMPTS.md` for the build prompts.
 
 ## What the plugin must do
 

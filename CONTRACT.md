@@ -1,7 +1,7 @@
 # API Contract — DO NOT BREAK without flagging the team
 
-This file is the stability boundary between Person 1 (plugin), Person 2 (backend),
-and Person 3 (demo). You may ADD fields; you may NOT rename or remove fields
+This file is the stability boundary between Riyansh (plugin), Darsh (backend),
+and Pranali (demo). You may ADD fields; you may NOT rename or remove fields
 without a PR comment that everyone acknowledges.
 
 Backend base URL: `http://localhost:8000` (local, no auth, CORS open)

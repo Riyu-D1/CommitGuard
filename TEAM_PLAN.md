@@ -10,30 +10,30 @@ Read `PLAYBOOK.md` for pitch/judge strategy. Read `CONTRACT.md` before writing a
 
 | Person | Owns | Never touches |
 |---|---|---|
-| **P1 — Plugin** | `plugin/` | `backend/`, `demo/` (except CONTRACT discussion) |
-| **P2 — Backend** | `backend/*.py`, `backend/company_brain.json` | `demo/`, `plugin/` |
-| **P3 — Demo & Pitch** | `demo/`, `pitch/`, `backend/scenarios.json` (data only) | `backend/*.py`, `plugin/` |
+| **Riyansh** — Plugin + Tech Lead | `plugin/`, `_llm_enrich()` in `backend/main.py`, merge-master | `rules.py`, `demo/` |
+| **Darsh** — Backend rules & actions | `backend/rules.py`, `backend/company_brain.json`, `backend/smoke_test.py`, `/execute-action` handlers | `_llm_enrich`, `demo/`, `plugin/`, `scenarios.json` |
+| **Pranali** — Demo, pitch & story | `demo/`, `pitch/`, `backend/scenarios.json` (data only) | `backend/*.py`, `plugin/` |
 
 Shared files (`CONTRACT.md`, `TEAM_PLAN.md`, `README.md`): edits by PR only, flag in chat.
 
 ## Git workflow
 
-- Branches: `p1/<thing>`, `p2/<thing>`, `p3/<thing>` — one feature per branch, small PRs.
+- Branches: `riyansh/<thing>`, `darsh/<thing>`, `pranali/<thing>` — one feature per branch, small PRs.
 - PR → `main`, **squash merge**, delete branch after.
-- **Merge order at checkpoints: backend → demo → plugin** (dependents merge last).
-- Rebase/merge `main` into your branch at every checkpoint — don't drift.
+- **Merge order at checkpoints: `darsh/*` → `pranali/*` → `riyansh/*`** (dependents merge last). Riyansh is merge-master.
+- Merge `main` into your branch at every checkpoint — don't drift.
 - Keep `main` runnable at all times: `cd backend && uv run uvicorn main:app --port 8000` must always work on main.
 
 ## Timeline & merge checkpoints
 
 | Time | Gate | Everyone |
 |---|---|---|
-| 09:30–10:45 | — | Venue, talks. P1 notes Lightfern plugin SDK shape from demo. All: skim PLAN files. |
-| 10:45–11:15 | **Register Finance/Ops track** | P1: plugin hello-world (renders anything). P2: env up, `smoke_test.py` green. P3: demo runs at :8000 on venue wifi. |
-| 11:15–13:00 | **M1 — working slice** | P1: plugin calls `/verify-context` + renders 1 violation card. P2: rules v2 merged. P3: demo v2 (inline highlights + evidence lines). |
-| 13:00–14:30 | **M2 — integrated** | P1: Apply-fix + Escalate/Stage buttons call `/execute-action`. P2: LLM enrich + `/brain/reload` + audit hardening. P3: scenarios final, backup screen-recording DONE. |
-| 14:30–15:30 | **M3 — freeze** | Feature freeze. P3 leads pitch rehearsal x3; P1/P2 fix only demo-blockers. |
-| 15:30–16:00 | Submit | Final PR merged. Submit. P3 submits text from `pitch/submission.md`. |
+| 09:30–10:45 | — | Venue, talks. Riyansh notes Lightfern plugin SDK shape from demo. All: skim your `team/<name>/README.md`. |
+| 10:45–11:15 | **Register Finance/Ops track** (Riyansh) | Riyansh: plugin hello-world. Darsh: env up, `smoke_test.py` green. Pranali: demo runs at :8000 on venue wifi, starts submission blurb. |
+| 11:15–13:00 | **M1 — working slice** | Riyansh: plugin calls `/verify-context` + renders 1 card. Darsh: rules v2 merged. Pranali: demo v2 (inline highlights) + scenario rewrites drafted. **12:30 = Riyansh's fallback call.** |
+| 13:00–14:30 | **M2 — integrated** | Riyansh: buttons → `/execute-action` + LLM enrich. Darsh: action hardening + `/health`. Pranali: scenarios encoded, **backup video DONE**, pitch rehearsed. |
+| 14:30–15:30 | **M3 — freeze** | Feature freeze. Pranali leads pitch rehearsal x3; others fix only demo-blockers. |
+| 15:30–16:00 | Submit | Final PR merged. **Pranali submits** from `pitch/submission.md` — before 16:00, not at it. |
 
 ## Definition of done — M1 (the "it works" gate)
 

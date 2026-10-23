@@ -21,11 +21,11 @@ uv run uvicorn main:app --port 8000
 
 | Path | Owner | What |
 |---|---|---|
-| `backend/` | Person 2 | FastAPI + deterministic rules engine + company_brain.json |
-| `plugin/` | Person 1 | Lightfern Mac app plugin (thin client) |
-| `demo/` | Person 3 | Standalone demo UI (served at `/`) |
-| `pitch/` | Person 3 | Script, Q&A, submission blurb, backup video |
-| `team/` | all | Per-person phase plans + agent prompts |
+| `backend/` | Darsh (rules/actions) + Riyansh (`_llm_enrich`) | FastAPI + deterministic rules engine + company_brain.json |
+| `plugin/` | Riyansh | Lightfern Mac app plugin (thin client) |
+| `demo/` | Pranali | Standalone demo UI (served at `/`) |
+| `pitch/` | Pranali | Script, Q&A, submission blurb, backup video |
+| `team/` | all | Per-person phase plans + agent prompts (`team/riyansh`, `team/darsh`, `team/pranali`) |
 | `CONTRACT.md` | shared | API contract — read before coding |
 | `TEAM_PLAN.md` | shared | Timeline, merge checkpoints, fallbacks |
 | `PLAYBOOK.md` | shared | Strategy, judges, narrative |

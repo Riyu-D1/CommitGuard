@@ -14,8 +14,9 @@ export OPENAI_API_KEY=...        # optional — works fully without it
 uv run uvicorn main:app --port 8000
 ```
 
-- Demo UI: http://localhost:8000
+- Demo UI: http://127.0.0.1:8000 (use 127.0.0.1 — some Macs resolve `localhost` to IPv6 where uvicorn doesn't listen)
 - Smoke test (offline): `cd backend && uv run python smoke_test.py`
+- Or one command: `./start.sh`
 
 ## Repo map
 

@@ -36,8 +36,8 @@ agent builds → you verify at http://localhost:8000 by clicking → next prompt
 ## The two commands you'll ever need
 
 ```bash
-cd backend && uv run uvicorn main:app --port 8000   # backend (once)
-open http://localhost:8000                         # the demo
+./start.sh                                        # from repo root — does everything
+open http://127.0.0.1:8000                        # the demo (use 127.0.0.1, not localhost)
 ```
 Errors → screenshot → Riyansh. Don't debug.
 

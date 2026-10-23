@@ -1,5 +1,10 @@
 # Pranali — Agent Prompts (the full frontend + content build)
 
+> **BASELINE EXISTS:** `demo/index.html`, `demo/inspector.html`, `submission.md`,
+> `rehearsal-sheet.md`, `one-pager.html` are all built and working. Prompts A–C
+> take them from working → polished product; D–F are content tasks where YOUR
+> input (rewritten scenario texts) is the point.
+
 **How to use:** work top-to-bottom through the phases. Paste each prompt into your
 agent IN FULL — self-contained, the agent codes, you verify at
 http://localhost:8000 by clicking. Backend must be running —

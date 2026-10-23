@@ -1,5 +1,10 @@
 # Riyansh — Agent Prompts (the full plugin + LLM build)
 
+> **BASELINE EXISTS:** `plugin/adapter.js` and `plugin/simulator.html` are already
+> built and working (Prompts A+B's output). Use Prompts A/B to *review or extend*
+> them — or skip straight to Prompt C once the SDK is revealed. `llm_enrich.py`
+> baseline works too; Prompt E hardens it.
+
 **How to use:** work top-to-bottom through the phases. Paste each prompt into your
 agent IN FULL — they are self-contained and assume no prior context. After each
 prompt, do the verification it specifies. Do not move on if verification fails —

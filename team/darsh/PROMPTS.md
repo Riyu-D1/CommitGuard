@@ -1,5 +1,11 @@
 # Darsh — Agent Prompts (the full rules engine + actions build)
 
+> **BASELINE EXISTS:** `rules.py`, `actions.py`, `company_brain.json`,
+> `smoke_test.py`, `bench.py`, `seed_audit.py` are all built and working.
+> Your prompts EXTEND them — the engine has 8 checks today; your job is rules
+> v2, dedupe, context filtering, promises, and brain data. Never delete existing
+> checks — only add.
+
 **How to use:** work top-to-bottom through the phases. Paste each prompt into your
 agent IN FULL — self-contained, no prior context needed. After every prompt run
 the verification it specifies. **Golden rule: `cd backend && uv run python

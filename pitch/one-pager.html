@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>CommitGuard — the pre-send firewall</title>
+<style>
+  @page { size: A4; margin: 18mm; }
+  * { box-sizing: border-box; margin: 0; }
+  body { font: 12px/1.5 -apple-system, "Helvetica Neue", sans-serif; color: #1a1a1a; max-width: 175mm; margin: 0 auto; padding: 8mm; }
+  .top { border-bottom: 2px solid #1a1a1a; padding-bottom: 10px; margin-bottom: 14px; }
+  h1 { font-size: 22px; }
+  .tag { color: #555; margin-top: 2px; }
+  .stat { font-size: 15px; font-weight: 700; margin-top: 8px; }
+  .stat span { color: #b00; }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: #555; margin: 14px 0 6px; }
+  .row { display: flex; gap: 10px; margin-bottom: 5px; }
+  .row .k { font-weight: 700; min-width: 150px; }
+  .row .e { color: #444; }
+  .flow { display: flex; align-items: center; gap: 8px; margin: 12px 0; }
+  .box { flex: 1; border: 1.5px solid #1a1a1a; border-radius: 6px; padding: 10px 12px; text-align: center; font-weight: 600; font-size: 11px; }
+  .box small { display: block; font-weight: 400; color: #555; margin-top: 3px; }
+  .arrow { font-size: 16px; }
+  .band { background: #f0f0f0; border-radius: 6px; padding: 10px 14px; font-size: 11px; text-align: center; margin-top: 14px; }
+  @media print { body { padding: 0; } }
+</style>
+</head>
+<body>
+  <div class="top">
+    <h1>CommitGuard</h1>
+    <div class="tag">The pre-send firewall for the company brain — nothing leaves the company the brain can't back up.</div>
+    <div class="stat">UK invoice &amp; mandate fraud: <span>£41.3M / year</span> — the most common fraud hitting UK business.</div>
+  </div>
+
+  <h2>What it catches</h2>
+  <div class="row"><div class="k">Policy breaches</div><div class="e">Net-60 offered when the CFO caps terms at Net-30; 15% discount vs the 10% cap.</div></div>
+  <div class="row"><div class="k">Contract overages</div><div class="e">£85/hr billed against a contracted £70/hr; £6,200 against a £5,000 retainer.</div></div>
+  <div class="row"><div class="k">Payment redirection</div><div class="e">A supplier IBAN that doesn't match the signed contract — the signature of mandate fraud. Send is blocked.</div></div>
+  <div class="row"><div class="k">Broken promises</div><div class="e">"SOC 2 is complete" — while the brain says it's still in audit.</div></div>
+
+  <h2>How it works</h2>
+  <div class="flow">
+    <div class="box">Text<small>email · Slack · invoice</small></div>
+    <div class="arrow">→</div>
+    <div class="box">Deterministic rules<br>× Company Brain<small>contracts · treasury · eng status</small></div>
+    <div class="arrow">→</div>
+    <div class="box">Fix · Block · Escalate<small>+ full audit trail</small></div>
+  </div>
+
+  <div class="band">rules engine &lt;5ms, fully offline · LLM optional (OpenAI structured outputs) · zero data retention · evidence cited on every flag</div>
+</body>
+</html>

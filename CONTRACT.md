@@ -5,7 +5,9 @@ Darsh (rules.py + actions.py + brain), and Pranali (demo + scenarios). You may
 ADD fields; you may NOT rename or remove fields without a PR comment that
 everyone acknowledges.
 
-Backend base URL: `http://localhost:8000` (local, no auth, CORS open)
+Backend base URL: `http://127.0.0.1:8000` (local, no auth, CORS open).
+NOTE: use `127.0.0.1`, not `localhost` — on some Macs `localhost` resolves to
+IPv6 `::1` where uvicorn doesn't listen; this bit us in testing.
 
 ---
 

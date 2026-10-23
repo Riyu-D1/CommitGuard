@@ -1,0 +1,22 @@
+{
+  "sales_email": {
+    "label": "Sales email - deal terms",
+    "context_type": "outgoing_email",
+    "text": "Hi Priya,\n\nGreat call today. To get this over the line we can offer Net-60 payment terms and a 15% discount on the custom migration, billed quarterly so your finance team stays happy.\n\nBest,\nAlex"
+  },
+  "vendor_invoice": {
+    "label": "Vendor invoice - CloudScale",
+    "context_type": "incoming_invoice",
+    "text": "INVOICE #CS-1187\nCloudScale Ltd\nOctober services: 40 hrs @ £85/hr\nMonthly retainer: £6,200\nTotal due: £9,600\n\nPlease note our updated bank details:\nIBAN: GB22BARC99887766554\nPayment terms: Net-30"
+  },
+  "support_reply": {
+    "label": "Support reply - status claim",
+    "context_type": "outgoing_email",
+    "text": "Hi Marcus,\n\nGood news - our SOC 2 Type II report is complete and certified, and SSO is live now, so your security review should be straightforward.\n\nThanks,\nPriya"
+  },
+  "clean_email": {
+    "label": "Clean email - should pass",
+    "context_type": "outgoing_email",
+    "text": "Hi John,\n\nWe can offer Net-30 payment terms with a 10% discount on the migration, billed monthly with 50% upfront.\n\nBest,\nAlex"
+  }
+}

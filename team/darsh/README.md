@@ -1,58 +1,54 @@
-# Darsh — Backend Rules & Actions
+# Darsh — Backend Rules, Actions & Brain
 
-You own `backend/rules.py`, `backend/company_brain.json`, `backend/smoke_test.py`,
-and the `/execute-action` handlers in `backend/main.py` (everything except
-`_llm_enrich` — that's Riyansh's). `scenarios.json` belongs to Pranali — ask her
-before touching it.
+Everyone codes via agents all day. Your workstream: `backend/rules.py`,
+`backend/actions.py`, `backend/company_brain.json`, `backend/smoke_test.py`.
+`main.py` and `llm_enrich.py` are NOT yours (Riyansh/shared). `scenarios.json`
+is Pranali's — ask her before touching.
 
-**Golden rule: after every change run the smoke test. If it's not green, undo and
-re-prompt — never push broken code.**
+**Golden rule: after every agent run — `cd backend && uv run python smoke_test.py`.
+Not green → paste the error back to the agent. Never push failing code.**
 
-```bash
-cd backend && uv run python smoke_test.py
-```
+## Your files
 
-All 4 scenarios must print their expected results (last line of each block):
-- sales_email → 3 violations (FINANCIAL_POLICY, MARGIN_BREACH, TREASURY_LOCK)
-- vendor_invoice → CRITICAL PAYMENT_REDIRECTION + 2 CONTRACT_OVERAGE
-- support_reply → 2 PROMISE_BREACH
-- clean_email → CLEAN
+- `backend/rules.py` — the deterministic engine (all the demo magic lives here)
+- `backend/actions.py` — execute-action handlers + audit helpers
+- `backend/company_brain.json` — the brain data
+- `backend/smoke_test.py` — your safety net (extend it, never weaken it)
+- `backend/bench.py` — yours to create (stretch task)
 
-## How your code fits in
+Expected smoke results: sales_email → 3 violations · vendor_invoice → CRITICAL
+PAYMENT_REDIRECTION + 2 CONTRACT_OVERAGE · support_reply → 2 PROMISE_BREACH ·
+clean_email → CLEAN.
 
-`rules.py` is a list of check functions `(text, brain) -> [violations]` registered in
-`ALL_CHECKS`. The API runs every check on every message. No AI knowledge needed —
-it's pattern matching (regex) against the JSON brain. Each violation carries an
-`evidence` block — that's what makes judges trust it.
-
-## Phases
+## Phases (stay on your agent constantly)
 
 ### Phase 0 — before 10:45
 - [ ] `cd backend && uv venv --python 3.12 && uv pip install -r requirements.txt`
-- [ ] `uv run uvicorn main:app --port 8000` → open localhost:8000, click the 4 scenario buttons, watch cards appear
-- [ ] `uv run python smoke_test.py` → all green
+- [ ] `uv run uvicorn main:app --port 8000` → click all 4 scenarios at localhost:8000
+- [ ] `uv run python smoke_test.py` green; read `rules.py` — understand `_v()` + one check fully
 - [ ] Branch `darsh/setup`
 
 ### Phase 1 — 10:45→11:15
-- [ ] Read `backend/rules.py` top to bottom — understand `_v()` and one check fully
-- [ ] Read `CONTRACT.md` — you must not break response fields
+- [ ] **Prompt A** straight away (3 new rules + tests) — this is your biggest task, start early
 
-### Phase 2 — 11:15→13:00 (M1 gate)
-- [ ] **Prompt A**: add 3 new rules (duplicate invoice, sender-domain phishing, urgency+bank-change)
-- [ ] Verify: `smoke_test.py` green AND your 3 new test cases fire
-- [ ] PR `darsh/rules-v2` → Riyansh merges at M1
+### Phase 2 — 11:15→13:00 (M1)
+- [ ] Finish Prompt A → verify → PR `darsh/rules-v2` → Riyansh merges at M1
+- [ ] Start **Prompt B** (actions dedupe + context filtering)
 
-### Phase 3 — 13:00→14:30 (M2 gate)
-- [ ] **Prompt B**: `/execute-action` hardening (invoice dedupe, `/health`, safe `/brain/reload`)
-- [ ] **Prompt C** (if time): unverified-promise rule
-- [ ] PR `darsh/actions` → merge at M2
+### Phase 3 — 13:00→14:30 (M2)
+- [ ] Finish Prompt B → PR `darsh/actions`
+- [ ] **Prompt C** (unverified-promise rule), then **Prompt D** (brain enrichment)
+- [ ] PRs merged at M2
 
-### Phase 4 — 14:30→16:00 (M3 freeze)
-- [ ] Freeze. Fix only what breaks the demo. On standby for Riyansh.
+### Phase 4 — 14:30→16:00 (M3)
+- [ ] Freeze. Demo-blockers only, on standby for Riyansh.
+
+### Stretch queue (if early — pull from TEAM_PLAN shared list first)
+- **Prompt E**: `bench.py` latency report (demo stat: "checks run in <5ms")
+- Context-type scenario suggestions for Pranali (what should fire differently for slack_message vs invoice?)
 
 ## Stuck? In order:
-
-1. Re-run `smoke_test.py` and read the error line
-2. `git diff` — check you didn't break an existing check
-3. Re-paste the prompt to the agent with the error message appended
-4. Ask Riyansh — never sit blocked >10 minutes
+1. Re-run smoke_test, read the error
+2. `git diff` — did you break an existing check?
+3. Re-paste the prompt with the error appended
+4. Ask Riyansh — never sit blocked >10 min

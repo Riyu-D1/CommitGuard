@@ -6,7 +6,7 @@ exact brain key that fired it, so nothing is ever "the model said so".
 """
 
 import re
-from typing import Any
+from typing import Any, Optional
 
 SEVERITY_ORDER = {"LOW": 0, "MEDIUM": 1, "HIGH": 2, "CRITICAL": 3}
 
@@ -264,7 +264,7 @@ ALL_CHECKS = [
 ]
 
 
-def run_rules(text: str, brain: dict) -> list:
+def run_rules(text: str, brain: dict, context_type: Optional[str] = None) -> list:
     violations = []
     for check in ALL_CHECKS:
         violations.extend(check(text, brain))

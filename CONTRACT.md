@@ -1,8 +1,9 @@
 # API Contract — DO NOT BREAK without flagging the team
 
-This file is the stability boundary between Riyansh (plugin), Darsh (backend),
-and Pranali (demo). You may ADD fields; you may NOT rename or remove fields
-without a PR comment that everyone acknowledges.
+This file is the stability boundary between Riyansh (plugin + llm_enrich.py),
+Darsh (rules.py + actions.py + brain), and Pranali (demo + scenarios). You may
+ADD fields; you may NOT rename or remove fields without a PR comment that
+everyone acknowledges.
 
 Backend base URL: `http://localhost:8000` (local, no auth, CORS open)
 
@@ -60,7 +61,8 @@ Client rules:
 - Every action appends to `backend/audit_log.jsonl`.
 
 ## GET /brain → the company_brain.json object
-## POST /brain/reload → re-read company_brain.json from disk (live-brain demo trick)
+## POST /brain/reload → re-read company_brain.json from disk (live-brain demo trick; 422 keeps old brain)
 ## GET /audit-log?limit=N → newest-first array of audit entries
 ## GET /scenarios → { key: { label, context_type, text } } from backend/scenarios.json
-## GET / → demo/index.html
+## GET /health → { ok, engine: "rules"|"rules+llm", checks, brain_keys }
+## GET / → demo/index.html · GET /inspector.html → demo/inspector.html

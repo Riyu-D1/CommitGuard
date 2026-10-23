@@ -6,15 +6,22 @@ Read `PLAYBOOK.md` for pitch/judge strategy. Read `CONTRACT.md` before writing a
 
 ---
 
+## Operating model — everyone codes constantly
+
+All three run coding agents in parallel all day. The file-ownership table below
+exists so three agents never touch the same file → PRs merge clean every time.
+
 ## Roles & file ownership
 
 | Person | Owns | Never touches |
 |---|---|---|
-| **Riyansh** — Plugin + Tech Lead | `plugin/`, `_llm_enrich()` in `backend/main.py`, merge-master | `rules.py`, `demo/` |
-| **Darsh** — Backend rules & actions | `backend/rules.py`, `backend/company_brain.json`, `backend/smoke_test.py`, `/execute-action` handlers | `_llm_enrich`, `demo/`, `plugin/`, `scenarios.json` |
-| **Pranali** — Demo, pitch & story | `demo/`, `pitch/`, `backend/scenarios.json` (data only) | `backend/*.py`, `plugin/` |
+| **Riyansh** — Plugin + Tech Lead | `plugin/` (all), `backend/llm_enrich.py`, merge-master | `backend/rules.py`, `actions.py`, `demo/` |
+| **Darsh** — Backend rules, actions & brain | `backend/rules.py`, `backend/actions.py`, `backend/company_brain.json`, `backend/smoke_test.py`, `backend/bench.py` | `main.py`, `llm_enrich.py`, `demo/`, `plugin/`, `scenarios.json` |
+| **Pranali** — Frontends + content | `demo/` (all), `pitch/` (all), `backend/scenarios.json` (data only) | `backend/*.py`, `plugin/` |
 
-Shared files (`CONTRACT.md`, `TEAM_PLAN.md`, `README.md`): edits by PR only, flag in chat.
+`backend/main.py` is **frozen/shared** — thin orchestration only, changes by PR with
+a flag to the whole team. Shared docs (`CONTRACT.md`, `TEAM_PLAN.md`, `README.md`):
+PR + flag in chat.
 
 ## Git workflow
 
@@ -22,7 +29,16 @@ Shared files (`CONTRACT.md`, `TEAM_PLAN.md`, `README.md`): edits by PR only, fla
 - PR → `main`, **squash merge**, delete branch after.
 - **Merge order at checkpoints: `darsh/*` → `pranali/*` → `riyansh/*`** (dependents merge last). Riyansh is merge-master.
 - Merge `main` into your branch at every checkpoint — don't drift.
-- Keep `main` runnable at all times: `cd backend && uv run uvicorn main:app --port 8000` must always work on main.
+- Keep `main` runnable: `cd backend && uv run uvicorn main:app --port 8000` must always work on main.
+- Rule for agents: "verify before you're done" is in every prompt — respect it.
+
+## Shared stretch queue — grab when your list empties (claim in chat first!)
+
+- [ ] `POST /verify-batch` endpoint (array of texts → array of results) — needs main.py flag
+- [ ] Second client: `slack_message` context_type scenario + any rule tweaks
+- [ ] `pitch/one-pager.html` judge handout (Pranali's Prompt F)
+- [ ] Latency stat for pitch (Darsh's bench.py)
+- [ ] Demo seed: pre-fill audit_log.jsonl with 5 realistic entries so Inspector isn't empty at demo time
 
 ## Timeline & merge checkpoints
 

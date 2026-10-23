@@ -1,8 +1,5 @@
 import json
-import os
 import time
-import uuid
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -12,19 +9,14 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 import rules
+import actions
+from llm_enrich import llm_enrich, llm_enabled
 
 BASE = Path(__file__).parent
 BRAIN_PATH = BASE / "company_brain.json"
-AUDIT_PATH = BASE / "audit_log.jsonl"
-STAGING_PATH = BASE / "round_staging_queue.json"
 
 app = FastAPI(title="CommitGuard", version="1.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
-
-_client = None
-if os.environ.get("OPENAI_API_KEY"):
-    from openai import OpenAI
-    _client = OpenAI()
 
 
 def load_brain():
@@ -52,62 +44,13 @@ SCENARIOS_PATH = BASE / "scenarios.json"
 SCENARIOS = json.loads(SCENARIOS_PATH.read_text()) if SCENARIOS_PATH.exists() else {}
 
 
-def _llm_enrich(text: str, context_type: str, violations: list, brain: dict) -> Optional[dict]:
-    if not _client:
-        return None
-    prompt = f"""You are CommitGuard, the pre-send compliance firewall for a company.
-Review the draft below against the Company Brain and the deterministic findings.
-
-Company Brain:
-{json.dumps(brain, indent=2)}
-
-Deterministic findings (already detected - keep them, improve wording if needed):
-{json.dumps(violations, indent=2)}
-
-Context type: {context_type}
-Draft:
-\"\"\"{text}\"\"\"
-
-Return: status (CLEAN or VIOLATION_DETECTED), risk_level, violations (same fields:
-category, severity, issue, correction, suggested_rewrite), and a single polished
-full_rewrite of the draft that resolves every violation while keeping the sender's
-tone. Set full_rewrite to null if CLEAN."""
-    try:
-        resp = _client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            timeout=8,
-            response_format={
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "commit_guard_response",
-                    "strict": True,
-                    "schema": {
-                        "type": "object",
-                        "properties": {
-                            "status": {"type": "string", "enum": ["CLEAN", "VIOLATION_DETECTED"]},
-                            "risk_level": {"type": "string", "enum": ["LOW", "MEDIUM", "HIGH"]},
-                            "violations": {"type": "array", "items": {"type": "object"}},
-                            "full_rewrite": {"type": ["string", "null"]},
-                        },
-                        "required": ["status", "risk_level", "violations", "full_rewrite"],
-                        "additionalProperties": False,
-                    },
-                },
-            },
-        )
-        return json.loads(resp.choices[0].message.content)
-    except Exception:
-        return None
-
-
 @app.post("/verify-context")
 def verify_context(req: VerifyRequest):
     t0 = time.time()
-    violations = rules.run_rules(req.text, COMPANY_BRAIN)
+    violations = rules.run_rules(req.text, COMPANY_BRAIN, req.context_type)
     engine = "rules"
 
-    llm = _llm_enrich(req.text, req.context_type, violations, COMPANY_BRAIN)
+    llm = llm_enrich(req.text, req.context_type, violations, COMPANY_BRAIN)
     full_rewrite = None
     if llm:
         engine = "rules+llm"
@@ -132,40 +75,9 @@ def verify_context(req: VerifyRequest):
     }
 
 
-def _audit(entry: dict) -> dict:
-    entry = {
-        "audit_log_id": f"log_{uuid.uuid4().hex[:8]}",
-        "ts": datetime.now(timezone.utc).isoformat(),
-        **entry,
-    }
-    with AUDIT_PATH.open("a") as f:
-        f.write(json.dumps(entry) + "\n")
-    return entry
-
-
 @app.post("/execute-action")
 def execute_action(req: ActionRequest):
-    if req.action_type == "STAGE_INVOICE":
-        queue = json.loads(STAGING_PATH.read_text()) if STAGING_PATH.exists() else []
-        queue.append({"staged_at": datetime.now(timezone.utc).isoformat(), **req.payload})
-        STAGING_PATH.write_text(json.dumps(queue, indent=2))
-        entry = _audit({"action_type": req.action_type, "payload": req.payload,
-                        "result": "staged_in_round_queue"})
-        return {"success": True, "audit_log_id": entry["audit_log_id"],
-                "message": "Invoice staged to Round Treasury approval queue."}
-
-    if req.action_type == "APPROVE_OVERRIDE" and not req.payload.get("reason"):
-        raise HTTPException(400, "Override requires a reason - it goes in the audit log.")
-
-    if req.action_type == "ESCALATE_FRAUD":
-        entry = _audit({"action_type": req.action_type, "payload": req.payload,
-                        "result": "escalated_to_cfo"})
-        return {"success": True, "audit_log_id": entry["audit_log_id"],
-                "message": f"Escalated to {COMPANY_BRAIN.get('people', {}).get('cfo', 'CFO')} - payment blocked pending out-of-band verification."}
-
-    entry = _audit({"action_type": req.action_type, "payload": req.payload, "result": "ok"})
-    return {"success": True, "audit_log_id": entry["audit_log_id"],
-            "message": f"Processed {req.action_type} and wrote it to the audit trail."}
+    return actions.execute_action(req.action_type, req.payload, COMPANY_BRAIN)
 
 
 @app.get("/brain")
@@ -176,21 +88,37 @@ def get_brain():
 @app.post("/brain/reload")
 def reload_brain():
     global COMPANY_BRAIN
-    COMPANY_BRAIN = load_brain()
+    try:
+        COMPANY_BRAIN = load_brain()
+    except Exception as e:
+        raise HTTPException(422, {"reloaded": False, "error": str(e)})
+    if not COMPANY_BRAIN:
+        raise HTTPException(422, {"reloaded": False, "error": "company_brain.json empty or malformed"})
     return {"reloaded": True, "keys": list(COMPANY_BRAIN.keys())}
 
 
 @app.get("/audit-log")
 def audit_log(limit: int = 20):
-    if not AUDIT_PATH.exists():
-        return []
-    lines = AUDIT_PATH.read_text().strip().splitlines()
-    return [json.loads(l) for l in lines[-limit:]][::-1]
+    return actions.read_audit(limit)
 
 
 @app.get("/scenarios")
 def scenarios():
     return SCENARIOS
+
+
+@app.get("/health")
+def health():
+    return {"ok": True, "engine": "rules+llm" if llm_enabled() else "rules",
+            "checks": len(rules.ALL_CHECKS), "brain_keys": list(COMPANY_BRAIN.keys())}
+
+
+@app.get("/inspector.html")
+def inspector():
+    path = BASE.parent / "demo" / "inspector.html"
+    if not path.exists():
+        raise HTTPException(404, "inspector.html not built yet")
+    return FileResponse(path)
 
 
 @app.get("/")

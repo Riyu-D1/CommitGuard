@@ -1,54 +1,59 @@
-# Riyansh — Plugin Lead + Technical Lead
+# Riyansh — Plugin Lead + Tech Lead
 
-Head of project. You own `plugin/`, the LLM enrichment path in `backend/main.py`
-(`_llm_enrich` only — Darsh owns everything else in backend), merge-master duties,
-and all final technical calls (fallback decisions, freeze time).
+Everyone codes via agents all day. Your workstream: `plugin/` + `backend/llm_enrich.py`
++ merge-master for all PRs. You also own the two authority calls: **12:30 fallback**
+and **15:30 freeze**.
 
-## Your extra duties as lead
+## Your files (nobody else touches them)
 
-- **10:45–11:15:** register the team on the **Finance/Ops track** before the deadline. Non-negotiable.
-- **Merge-master:** at each checkpoint you merge PRs in order: `darsh/*` (backend) → `pranali/*` (demo/scenarios) → `riyansh/*` (plugin). `main` must always run: `cd backend && uv run uvicorn main:app --port 8000`.
-- **12:30 fallback call:** if the plugin can't render a violation card by 12:30, declare the fallback level (bottom of this file) and move on — don't negotiate with the SDK.
-- **15:30 freeze:** you call it, you enforce it.
+- `plugin/` — everything
+- `backend/llm_enrich.py` — the optional OpenAI second stage
+- `plugin/simulator.html` — your secret weapon (below)
 
-## Interface you build against
+## The simulator trick
 
-Backend `http://localhost:8000`, contract in `CONTRACT.md`. Flow: capture draft text →
-`POST /verify-context` (debounced ~700ms) → render cards → buttons → `POST /execute-action`.
-Card: severity color, category, issue, evidence line (`brain_key` = expected · found), correction.
-Buttons: Apply fixes / Send anyway (needs reason) / Escalate to CFO (CRITICAL only) / Stage in Round.
-CRITICAL severity → hide Send + Send-anyway.
+Don't wait for the SDK. Prompt A builds a **fake draft surface** (`simulator.html`)
+that mimics what the plugin will do — read text, verify, render cards, buttons.
+By the time the real SDK is revealed (~10:45) your UI logic is DONE; you only port
+it. That's the difference between finishing at 13:00 vs 15:30.
 
-## Phases
+## Extra duties as lead
+
+- **10:45–11:15:** register team on **Finance/Ops track**. Non-negotiable.
+- **Merge-master:** checkpoint order `darsh/*` → `pranali/*` → `riyansh/*`. `main` must always run `uv run uvicorn main:app --port 8000` from `backend/`.
+- **12:30:** if no violation card renders in the real plugin, declare fallback level and move on.
+- **15:30:** freeze — you call it, you enforce it.
+
+## Phases (stay on your agent constantly)
 
 ### Phase 0 — before 10:45
-- [ ] `cd backend && uv venv --python 3.12 && uv pip install -r requirements.txt && uv run uvicorn main:app --port 8000` → curl `/verify-context` once
-- [ ] `export OPENAI_API_KEY=...` — confirm `meta.engine` reports `rules+llm` on a verify call
-- [ ] Branch `riyansh/setup`; fill `plugin/README.md` SDK notes during the 10:00 Lightfern demo
-- [ ] **Prompt A** (PROMPTS.md): build `plugin/` adapter scaffold
+- [ ] `cd backend && uv venv --python 3.12 && uv pip install -r requirements.txt && uv run uvicorn main:app --port 8000`
+- [ ] `export OPENAI_API_KEY=...` → `curl localhost:8000/health` shows `rules+llm`
+- [ ] Branch `riyansh/setup`; **Prompt A** (adapter + simulator) — start it during the talks if you can
 
 ### Phase 1 — 10:45→11:15
-- [ ] Register track. Watch Lightfern demo for: how plugins load, UI surface (panel/inline/toolbar), how to read draft text, lifecycle events
-- [ ] Ask their team early: "how do I read the current draft text and render a custom panel?"
-- [ ] Hello-world plugin renders *anything* → PR `riyansh/setup` → **M0 merge**
+- [ ] Register track. Note from Lightfern demo: plugin manifest format, draft-text access, UI surface, lifecycle
+- [ ] Fill `plugin/README.md` SDK notes section; hello-world plugin renders *anything* → PR `riyansh/setup` → M0 merge
 
-### Phase 2 — 11:15→13:00 (M1 gate)
-- [ ] **Prompt B**: plugin calls `/verify-context` on draft change, renders 1 violation card
-- [ ] PR `riyansh/verify-render` → merge at M1
-- [ ] **12:30:** fallback decision — say it out loud, move on
+### Phase 2 — 11:15→13:00 (M1)
+- [ ] **Prompt B**: port simulator UI into the real plugin — verify → card render
+- [ ] **12:30 fallback call** — say it, log it in TEAM_PLAN, move
+- [ ] PR `riyansh/plugin-v1` → merge at M1
 
-### Phase 3 — 13:00→14:30 (M2 gate)
-- [ ] **Prompt C**: all 4 buttons wired, CRITICAL lockout, audit feed
-- [ ] **Prompt D**: LLM enrichment pass in `_llm_enrich` (your AI-lead task — temperature 0, strict schema, tone-preserving rewrite)
+### Phase 3 — 13:00→14:30 (M2)
+- [ ] **Prompt C**: buttons + CRITICAL lockout + audit feed in plugin
+- [ ] **Prompt D**: LLM enrichment in `llm_enrich.py` (temperature 0, strict schema, tone-preserving rewrite)
 - [ ] PRs `riyansh/actions` + `riyansh/llm` → merge at M2
 
-### Phase 4 — 14:30→16:00 (M3 freeze)
-- [ ] Demo-blocker fixes only. Rehearse your 20s segment (the plugin live part).
-- [ ] Final PR merged. Confirm smoke test green on clean `main`.
+### Phase 4 — 14:30→16:00 (M3)
+- [ ] Demo-blockers only. Rehearse your 20s of pitch. Final merge.
 
-## Fallback ladder (you own this call)
+### Stretch queue (if you finish early — pick from TEAM_PLAN shared list first)
+- Second client: Slack-message context_type demo path in the plugin/simulator
+- `plugin/` polish: severity animations, keyboard shortcut to apply fixes
 
+## Fallback ladder (your call at 12:30)
 1. Full plugin card UI ← target
-2. Plugin badge "⚠ N violations" + button opening `localhost:8000`
-3. demo/index.html standalone — "the same check runs anywhere text leaves the company"
+2. Badge "⚠ N violations" + "Open details" → localhost:8000
+3. demo/index.html standalone
 4. Pranali's backup video

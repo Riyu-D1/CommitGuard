@@ -1,7 +1,7 @@
 # Pranali — Frontends + Content
 
 Everyone codes via agents all day — you included. Your workflow: paste prompt →
-agent builds → you verify at http://localhost:8000 by clicking → next prompt.
+agent builds → you verify at http://127.0.0.1:8000 by clicking → next prompt.
 **Your build lives in `PROMPTS.md` — execute it top-to-bottom.**
 
 ## Your files (nobody else touches them)

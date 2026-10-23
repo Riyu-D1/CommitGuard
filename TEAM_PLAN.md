@@ -3,6 +3,7 @@
 Register team + track BEFORE the 11:15 deadline — do it in the first 15 min.
 
 Read `PLAYBOOK.md` for pitch/judge strategy. Read `CONTRACT.md` before writing any code.
+**On the day itself, `TOMORROW.md` is the operating doc — this file is the deep plan.**
 
 ---
 

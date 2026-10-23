@@ -7,16 +7,35 @@
 
 **How to use:** work top-to-bottom through the phases. Paste each prompt into your
 agent IN FULL — self-contained, the agent codes, you verify at
-http://localhost:8000 by clicking. Backend must be running —
+http://127.0.0.1:8000 by clicking. Backend must be running —
 `cd backend && uv run uvicorn main:app --port 8000` (ask Riyansh if it isn't).
 
 **Your files:** everything in `demo/` + `pitch/` + `backend/scenarios.json` (data only).
 **Never touch:** `backend/*.py`, `plugin/`.
 **Contract:** `CONTRACT.md` at repo root — the backend API is fixed.
 
+## Ship ritual — after EVERY prompt verifies (you checked it in the browser)
+
+```bash
+git checkout -b pranali/phase<N>
+git add -A && git commit -m "phase <N> — <what it did>"
+git push -u origin pranali/phase<N>
+gh pr create --fill --base main        # or click the link git prints — easiest
+```
+
+| Phase → | Prompt(s) | Branch |
+|---|---|---|
+| 1 | A | `pranali/phase1` |
+| 2 | B + C | `pranali/phase2` |
+| 3 | D + E | `pranali/phase3` |
+| 4 | F (+ video + submission — no prompt needed) | `pranali/phase4` |
+
+Then post "phase N up" in chat and **wait for all three merges before the next
+phase** (Riyansh merges everything).
+
 ---
 
-# PHASE 1 — Flagship demo UI (10:45–13:00)
+# PHASE 1 — Flagship demo UI (from 10:45, ship `pranali/phase1`)
 Goal: `demo/index.html` becomes a product — the thing judges screenshot.
 
 ## Prompt A — Rebuild the compose experience (the big one)
@@ -26,7 +45,7 @@ You are building part of CommitGuard, a hackathon project: a "pre-send firewall"
 that checks outgoing drafts and incoming invoices against a company knowledge
 base ("the brain") and flags violations inline, with one-click compliant fixes.
 
-CONTEXT: Backend at http://localhost:8000, API in repo-root CONTRACT.md — READ IT
+CONTEXT: Backend at http://127.0.0.1:8000, API in repo-root CONTRACT.md — READ IT
 FIRST. `demo/index.html` exists — read it, keep its dark theme and CSS variable
 names, but you may restructure the markup freely. Single file, vanilla HTML/CSS/JS,
 NO frameworks, NO external assets/fonts/CDNs (must work offline on localhost).
@@ -96,11 +115,13 @@ clean_email → instant green CLEAR + Send works. Kill backend → "backend offl
 state, health dot red, cards remain. Report results.
 ```
 
+# PHASE 2 — Polish + Inspector (after Phase 1 merges, ship `pranali/phase2`)
+
 ## Prompt B — Micro-polish pass (only after A verifies)
 
 ```
 Context: `demo/index.html` — CommitGuard flagship UI just rebuilt and verified
-(backend localhost:8000, CONTRACT.md). Keep it one file, no dependencies.
+(backend 127.0.0.1:8000, CONTRACT.md). Keep it one file, no dependencies.
 
 TASK — finishing touches:
 1. Scenario buttons: show a tiny colored tag for context_type on each
@@ -118,7 +139,7 @@ VERIFY: click through all scenarios again; confirm no console errors.
 
 ---
 
-# PHASE 2 — Inspector page + scenario content (13:00–14:00)
+# PHASE 2 (continued)
 
 ## Prompt C — Compliance Inspector page
 
@@ -149,6 +170,8 @@ main page (e.g., click Send on clean_email) — watch it appear in Audit Trail
 within 4s. Report.
 ```
 
+# PHASE 3 — Scenarios + submission (after Phase 2 merges, ship `pranali/phase3`)
+
 ## Prompt D — Encode my scenario rewrites
 
 ```
@@ -172,7 +195,7 @@ TASK:
 
 ---
 
-# PHASE 3 — Submission + pitch artifacts (14:00–14:45)
+# PHASE 3 (continued)
 
 ## Prompt E — Submission + rehearsal sheet
 
@@ -210,6 +233,8 @@ TASK — write two files:
      worked / sponsor relevance / evidence receipts shown / time kept.
    - 6 likely judge Q&As (from pitch/script.md) condensed to one line each.
 ```
+
+# PHASE 4 — Final artifacts (after Phase 3 merges, ship `pranali/phase4`)
 
 ## Prompt F — Judge one-pager
 

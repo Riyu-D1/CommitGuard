@@ -21,9 +21,28 @@ back to the agent → do not move on.
 TREASURY_LOCK · vendor_invoice → CRITICAL PAYMENT_REDIRECTION + 2 CONTRACT_OVERAGE ·
 support_reply → 2 PROMISE_BREACH · clean_email → CLEAN.
 
+## Ship ritual — after EVERY prompt verifies green
+
+```bash
+git checkout -b darsh/phase<N>
+git add -A && git commit -m "phase <N> — <what it did>"
+git push -u origin darsh/phase<N>
+gh pr create --fill --base main        # or click the link git prints
+```
+
+| Phase → | Prompt(s) | Branch |
+|---|---|---|
+| 1 | A | `darsh/phase1` |
+| 2 | B | `darsh/phase2` |
+| 3 | C + D | `darsh/phase3` |
+| 4 | F (+G if time) | `darsh/phase4` |
+
+Then post "phase N up" in chat and **wait for all three merges before the next
+phase** (Riyansh merges — don't merge your own).
+
 ---
 
-# PHASE 1 — Rules engine v2 (10:45–13:00)
+# PHASE 1 — Rules engine v2 (from 10:45, ship as `darsh/phase1`)
 Goal: the demo's "wow" — fraud detection rules that fire on realistic text.
 
 ## Prompt A — Three fraud-detection rules + tests
@@ -93,7 +112,7 @@ all new TEST_CASES print PASS. Show me the full output.
 
 ---
 
-# PHASE 2 — Actions hardening + context-aware rules (13:00–14:00)
+# PHASE 2 — Actions hardening (after Phase 1 merges, ship `darsh/phase2`)
 
 ## Prompt B — actions.py: dedupe + richer audit
 
@@ -120,6 +139,8 @@ VERIFY: curl POST /execute-action STAGE_INVOICE twice with the same
 file has ONE entry; GET /audit-log?limit=5 shows both attempts with distinct
 results. Show outputs.
 ```
+
+# PHASE 3 — Context filtering + promises + brain (after Phase 2 merges, ship `darsh/phase3`)
 
 ## Prompt C — Context-aware rule filtering in rules.py
 
@@ -153,8 +174,6 @@ context-filter cases. Show output.
 ```
 
 ---
-
-# PHASE 3 — Promise detection + brain data + perf (13:45–14:30)
 
 ## Prompt D — Unverified-promise rule
 
@@ -209,7 +228,9 @@ VERIFY: `uv run python smoke_test.py` — all results identical to before.
 Then POST /brain/reload and GET /brain to confirm the new keys load. Show output.
 ```
 
-## Prompt F — Latency benchmark (produces the "<5ms" demo stat)
+# PHASE 4 — Stretch (after Phase 3 merges, ship `darsh/phase4`)
+
+## Prompt F — Latency benchmark (produces the "<5ms" demo stat — NOTE: bench.py already exists; run it, paste the table into the pitch deck, extend only if you want)
 
 ```
 Context: `backend/rules.py`. TASK: create `backend/bench.py`:
@@ -226,7 +247,7 @@ VERIFY: `uv run python bench.py` — show me the table. If anything is slow
 
 ---
 
-# PHASE 4 — Stretch (claim from TEAM_PLAN shared queue first)
+# PHASE 4 (continued) — claim shared-queue items in TEAM_PLAN first
 
 ## Prompt G — Audit seed for the demo
 

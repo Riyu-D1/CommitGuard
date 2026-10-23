@@ -29,6 +29,7 @@ uv run uvicorn main:app --port 8000
 | `demo/` | Pranali | Demo UI (`/`)+ Inspector compliance console (`/inspector.html`) |
 | `pitch/` | Pranali | Script, submission, rehearsal sheet, backup video |
 | `team/` | all | Per-person phase plans + agent prompts (`team/riyansh`, `team/darsh`, `team/pranali`) |
+| `TOMORROW.md` | shared | **Day-of runbook — the only doc you need open** |
 | `CONTRACT.md` | shared | API contract — read before coding |
 | `TEAM_PLAN.md` | shared | Timeline, merge checkpoints, stretch queue |
 | `PLAYBOOK.md` | shared | Strategy, judges, narrative |

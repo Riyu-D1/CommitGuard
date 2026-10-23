@@ -15,14 +15,35 @@ paste the error back.
 `demo/`, `pitch/`, `backend/scenarios.json`.
 **Contract:** `CONTRACT.md` at repo root — the API is fixed; your code adapts to it.
 
-**Run before starting:** `cd backend && uv run uvicorn main:app --port 8000`
-then `curl localhost:8000/health` → must return `{"ok":true,...}`.
+**Run before starting:** `./start.sh` from repo root, then
+`curl 127.0.0.1:8000/health` → must return `{"ok":true,...}`.
+
+## Ship ritual — after EVERY prompt verifies green
+
+```bash
+git checkout -b riyansh/phase<N>
+git add -A && git commit -m "phase <N> — <what it did>"
+git push -u origin riyansh/phase<N>
+gh pr create --fill --base main        # or click the link git prints
+```
+
+| Phase → | Prompt(s) | Branch |
+|---|---|---|
+| 1 | C | `riyansh/phase1` |
+| 2 | D (or G if fallback called) | `riyansh/phase2` |
+| 3 | E + F | `riyansh/phase3` |
+
+Then post "phase N up" in chat and **wait for all three merges before the next
+phase**. You merge everything, in order: `darsh/*` → `pranali/*` → `riyansh/*` —
+pull main + smoke test green before each merge.
 
 ---
 
-# PHASE 1 — Foundation (10:45–11:15)
-Goal: the entire plugin UX built and verified against a simulated host app —
-before the real SDK is even understood. This is the critical-path unlock.
+# BASELINE — already built (skip unless extending)
+
+Prompts A+B produced `plugin/adapter.js` and `plugin/simulator.html` — both exist
+and work. These stay here as reference for review/extension; your real work
+starts at Phase 1 below (Prompt C).
 
 ## Prompt A — Backend adapter module
 
@@ -31,7 +52,7 @@ You are building part of CommitGuard, a hackathon project: a "pre-send firewall"
 that checks outgoing drafts (emails, messages) and incoming invoices against a
 company knowledge base, flags violations, and offers one-click fixes.
 
-CONTEXT: A FastAPI backend runs at http://localhost:8000. Its API is defined in
+CONTEXT: A FastAPI backend runs at http://127.0.0.1:8000. Its API is defined in
 CONTRACT.md at the repo root — read that file first. Do not start coding until
 you have read it.
 
@@ -61,7 +82,7 @@ Requirements:
    @typedef VerifyResponse {ok, status, risk_level, violations[],
                             suggested_rewrite, meta {engine, checks_run, latency_ms}}
    @typedef ActionResponse {ok, success, audit_log_id, message}
-5. BASE_URL constant = "http://localhost:8000" at top of file.
+5. BASE_URL constant = "http://127.0.0.1:8000" at top of file.
 
 VERIFY: create nothing else. Tell me the file is ready and list the exports.
 ```
@@ -70,7 +91,7 @@ VERIFY: create nothing else. Tell me the file is ready and list the exports.
 
 ```
 You are building part of CommitGuard, a pre-send compliance firewall. The backend
-API is at http://localhost:8000 (contract in repo-root CONTRACT.md — read it).
+API is at http://127.0.0.1:8000 (contract in repo-root CONTRACT.md — read it).
 `plugin/adapter.js` already exists exposing CommitGuardAdapter with verifyContext,
 executeAction, getScenarios, getAuditLog, getBrain, debounce (read it first).
 
@@ -133,15 +154,15 @@ flip to "backend offline". Report what you saw.
 
 ---
 
-# PHASE 2 — Port to the real SDK (11:15–13:00)
-Goal: violation cards rendering inside the actual Lightfern plugin runtime by M1.
+# PHASE 1 — Real SDK skeleton (from 10:45, ship as `riyansh/phase1`)
+Goal: draft text reaching the backend inside the real Lightfern runtime.
 **Fill the `[SDK: …]` slots from the 10:00 demo + any docs before pasting.**
 
 ## Prompt C — SDK analysis + plugin skeleton
 
 ```
 You are building the CommitGuard plugin for a real host app's plugin runtime.
-Backend: http://localhost:8000 per CONTRACT.md. `plugin/adapter.js` (backend comms)
+Backend: http://127.0.0.1:8000 per CONTRACT.md. `plugin/adapter.js` (backend comms)
 and `plugin/simulator.html` (reference UX) are done and verified — read both.
 
 THE HOST SDK (what I learned from their demo/docs):
@@ -167,6 +188,8 @@ TASK:
 VERIFY: the plugin loads in the host app and the badge text updates when I type.
 If the host can't run yet, show me the skeleton passes their validator/linter.
 ```
+
+# PHASE 2 — Full card UI in the host (after Phase 1 merges, ship `riyansh/phase2`)
 
 ## Prompt D — Full card UI inside the host
 
@@ -199,7 +222,7 @@ card, Escalate/Stage buttons, no send path. Report which level you reached.
 
 ---
 
-# PHASE 3 — LLM enrichment + integration hardening (13:00–14:30)
+# PHASE 3 — LLM enrichment + E2E proof (after Phase 2 merges, ship `riyansh/phase3`)
 
 ## Prompt E — LLM second stage (backend/llm_enrich.py — your file)
 
@@ -240,7 +263,7 @@ OPENAI_API_KEY, and WITH it (engine=rules+llm via GET /health). Show both runs.
 
 ```
 Context: CommitGuard repo. Backend: `cd backend && uv run uvicorn main:app
---port 8000`. Demo UI at localhost:8000. Simulator at plugin/simulator.html.
+--port 8000`. Demo UI at 127.0.0.1:8000. Simulator at plugin/simulator.html.
 API per CONTRACT.md.
 
 TASK: write `plugin/E2E.md` — a numbered, checkboxed end-to-end test script a
@@ -263,7 +286,7 @@ Report a pass/fail table.
 
 ---
 
-# PHASE 4 — Conditional fallback + stretch (use only as directed)
+# CONDITIONAL / STRETCH — only when called or when you're early
 
 ## Prompt G — Badge fallback (ONLY if told at the 12:30 decision)
 
@@ -274,7 +297,7 @@ plugin/SDK_NOTES.md.
 TASK: plugin renders ONLY a compact badge in the host surface — "⚠ N violations
 (risk X)" colored by max severity, or "✓ clear" green — driven by debounced
 verifyContext() calls on draft change, plus ONE action "Open details" that opens
-http://localhost:8000 in the system browser (or copies the URL to clipboard if
+http://127.0.0.1:8000 in the system browser (or copies the URL to clipboard if
 opening is impossible). Nothing else. Minimal code, robust to BACKEND_OFFLINE
 (show "— offline"). Verify: badge updates as I type.
 ```

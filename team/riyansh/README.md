@@ -29,7 +29,7 @@ execute it top-to-bottom; the phases map to the day's schedule.**
 
 ## Fallback ladder
 1. Full plugin card UI ← target
-2. Badge "⚠ N violations" + "Open details" → localhost:8000 (Prompt G)
+2. Badge "⚠ N violations" + "Open details" → 127.0.0.1:8000 (Prompt G)
 3. demo/index.html standalone
 4. Pranali's backup video
 

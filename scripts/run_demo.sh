@@ -10,12 +10,29 @@ if [ ! -f .env ]; then
   echo ""
 fi
 
-cat <<'EOF'
+# Honour LIGHTFERN_APP_DIR from backend/.env so this script alone wires the
+# Lightfern file bridge (the app also loads .env itself; exporting here makes
+# it explicit and shows up in the banner). Real env always wins.
+if [ -z "${LIGHTFERN_APP_DIR:-}" ] && [ -f .env ]; then
+  _lf=$(sed -n 's/^[[:space:]]*\(export[[:space:]]*\)\?LIGHTFERN_APP_DIR[[:space:]]*=[[:space:]]*//p' .env | tail -1 | sed 's/^["'"'"']//; s/["'"'"'][[:space:]]*$//; s/[[:space:]]*$//')
+  if [ -n "$_lf" ]; then
+    export LIGHTFERN_APP_DIR="$_lf"
+  fi
+fi
+
+if [ -n "${LIGHTFERN_APP_DIR:-}" ]; then
+  LF_LINE="   lightfern    →  $LIGHTFERN_APP_DIR"
+else
+  LF_LINE="   lightfern    →  off (set LIGHTFERN_APP_DIR in backend/.env)"
+fi
+
+cat <<EOF
   CommitGuard
   ──────────────────────────────────────────────────
    demo UI      →  http://127.0.0.1:8000/
    inspector    →  http://127.0.0.1:8000/inspector.html
    slack status →  http://127.0.0.1:8000/slack/status
+$LF_LINE
   ──────────────────────────────────────────────────
 EOF
 

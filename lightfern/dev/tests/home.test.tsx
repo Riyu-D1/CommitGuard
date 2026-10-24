@@ -132,6 +132,7 @@ const SAMPLE_FEED = {
 
 const SAMPLE_STATUS = () => ({
   ts: new Date().toISOString(),
+  heartbeat_ts: new Date().toISOString(),
   live: true,
   mode: "slack",
   checks_total: 4,
@@ -194,6 +195,7 @@ describe("CommitGuard Brain home view", () => {
   it("renders the live stream, the brain panel and mode badge", async () => {
     await mount();
     expect(await screen.findByText("COMMITGUARD")).toBeDefined();
+    expect(screen.getByText("CONNECTED")).toBeDefined();
     expect(screen.getByText("LIVE")).toBeDefined();
     expect(screen.getByText("SAMPLE COMPANY DATA")).toBeDefined();
 
@@ -217,6 +219,32 @@ describe("CommitGuard Brain home view", () => {
     expect(screen.getByText("Contract — CloudScale Ltd")).toBeDefined();
     expect(screen.getByText("“kickback scheme”")).toBeDefined();
     expect(screen.getByText("“£85/seat”")).toBeDefined();
+  });
+
+  it("shows a clear empty state when the stream is empty", async () => {
+    const { fakeFiles } = await import("./lf-host-mock.ts");
+    fakeFiles.reset();
+    seed(fakeFiles);
+    fakeFiles.seed("live/feed.json", JSON.stringify({ entries: [] }));
+    await act(async () => {
+      await import("../../CommitGuard Brain/code/src/home.tsx");
+    });
+    expect(await screen.findByText("Nothing checked yet")).toBeDefined();
+    // the heartbeat is fresh, so the empty state says the bridge is ready
+    expect(screen.getByText(/bridge is connected/)).toBeDefined();
+    expect(screen.getByText("CONNECTED")).toBeDefined();
+  });
+
+  it("shows STALE + a waiting hint when the heartbeat is missing", async () => {
+    const { fakeFiles } = await import("./lf-host-mock.ts");
+    fakeFiles.reset();
+    fakeFiles.seed("live/feed.json", JSON.stringify({ entries: [] }));
+    // no status.json at all — bridge has never written one
+    await act(async () => {
+      await import("../../CommitGuard Brain/code/src/home.tsx");
+    });
+    expect(await screen.findByText("STALE")).toBeDefined();
+    expect(screen.getByText("Waiting for the bridge")).toBeDefined();
   });
 
   it("Missed on a feed item writes an override command to inbox/", async () => {

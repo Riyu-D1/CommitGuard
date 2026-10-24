@@ -173,6 +173,7 @@ const FEED = {
 
 const STATUS = {
   ts: new Date().toISOString(),
+  heartbeat_ts: new Date().toISOString(),
   live: true,
   mode: "slack",
   checks_total: 4,
@@ -248,7 +249,7 @@ for (const [name, md] of Object.entries(POLICIES)) {
 setInterval(() => {
   try {
     const st = JSON.parse(files.get("live/status.json") ?? "{}");
-    st.ts = new Date().toISOString();
+    st.ts = st.heartbeat_ts = new Date().toISOString();
     files.set("live/status.json", JSON.stringify(st));
   } catch {
     /* noop */

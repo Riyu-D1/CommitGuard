@@ -82,6 +82,7 @@ interface FeedDoc {
 
 interface StatusDoc {
   ts?: string;
+  heartbeat_ts?: string;
   live?: boolean;
   mode?: string;
   checks_total?: number;
@@ -232,10 +233,12 @@ function useBridgeData() {
 // ---- components ------------------------------------------------------------
 
 function Header({ status }: { status: StatusDoc | null }) {
-  const fresh =
-    !!status?.ts && Date.now() - new Date(status.ts).getTime() < LIVE_STALE_MS;
-  const live = !!status?.live && fresh;
-  const mode = !live ? "OFFLINE" : status?.mode === "slack" ? "LIVE" : "SIMULATED";
+  // The bridge rewrites status.json every second it runs — heartbeat_ts is
+  // the liveness signal. Older builds only wrote `ts`, so fall back to it.
+  const hb = status?.heartbeat_ts ?? status?.ts;
+  const connected =
+    !!hb && Date.now() - new Date(hb).getTime() < LIVE_STALE_MS;
+  const mode = status?.mode === "slack" ? "LIVE" : "SIMULATED";
   return (
     <header className="top">
       <div className="brand">
@@ -246,10 +249,20 @@ function Header({ status }: { status: StatusDoc | null }) {
         {status?.sample_company_data ? (
           <span className="tag">SAMPLE COMPANY DATA</span>
         ) : null}
-        <span className={`mode mode-${mode.toLowerCase()}`}>
+        <span
+          className={`conn ${connected ? "conn-ok" : "conn-stale"}`}
+          title={
+            connected
+              ? `bridge heartbeat ${timeShort(hb)}`
+              : "no bridge heartbeat — is the backend running with LIGHTFERN_APP_DIR set?"
+          }
+        >
           <span className="dot" />
-          {mode}
+          {connected ? "CONNECTED" : "STALE"}
         </span>
+        {status ? (
+          <span className={`mode mode-${mode.toLowerCase()}`}>{mode}</span>
+        ) : null}
       </div>
     </header>
   );
@@ -597,11 +610,20 @@ function App() {
           <div className="panel-label">LIVE CHECK STREAM</div>
           {entries.length === 0 ? (
             <div className="empty-feed">
-              <div className="empty-title">Nothing checked yet</div>
+              <div className="empty-title">
+                {status?.heartbeat_ts ?? status?.ts
+                  ? "Nothing checked yet"
+                  : "Waiting for the bridge"}
+              </div>
               <div>
-                When the backend is running with LIGHTFERN_APP_DIR set, every
-                message it checks lands here within a second — verdict,
-                evidence, rewrite and planned actions.
+                {status?.heartbeat_ts ?? status?.ts
+                  ? "The bridge is connected — every message the backend " +
+                    "checks lands here within a second: verdict, evidence, " +
+                    "rewrite and planned actions."
+                  : "Start the backend with LIGHTFERN_APP_DIR pointed at this " +
+                    "app folder. Once the heartbeat lands, this stream fills " +
+                    "with live checks — verdict, evidence, rewrite and " +
+                    "planned actions."}
               </div>
             </div>
           ) : (

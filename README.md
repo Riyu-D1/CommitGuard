@@ -113,8 +113,14 @@ flowchart LR
 > `tsc --noEmit` against the SDK's `lightfern:host` types, and a vitest that
 > renders `home.tsx` against a fake ctx and clicks **Missed** (see
 > `lightfern/dev/`). The backend bridge is covered end-to-end by
-> `backend/test_lightfern_bridge.py`. All company data in the app folder is
-> **sample data** for the demo.
+> `backend/test_lightfern_bridge.py`, and the whole integration against a
+> real server by `scripts/lightfern_live_check.py` — it spins up uvicorn on
+> 127.0.0.1:8004 with a temp app copy and asserts the check→feed, heartbeat,
+> learn, override, ask, brain-edit, corrupt-brain and restart flows (prints
+> `LIGHTFERN READY`). The home view's header shows **CONNECTED** whenever
+> `live/status.json`'s `heartbeat_ts` is fresh (~1s writes) and **STALE**
+> when it isn't. All company data in the app folder is **sample data** for
+> the demo.
 
 ## Repo map
 

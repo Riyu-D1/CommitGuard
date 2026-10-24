@@ -307,7 +307,9 @@ exactly as it does without the bridge.
   (mtime check); invalid JSON is rejected and logged in `live/status.json`.
 - `live/feed.json` — last 100 checked items, appended after every
   /verify-context, /verify-batch item, and Slack-feed check; atomic writes.
-- `live/status.json` — bridge heartbeat `{mode, checks_total, errors…}`.
+- `live/status.json` — bridge heartbeat `{heartbeat_ts, mode, checks_total,
+  errors…}` rewritten ~every 1s while the bridge runs; the home view shows
+  CONNECTED vs STALE off `heartbeat_ts` (stale after ~15s).
 - `live/answers/<id>.json` — brain answers for `{"cmd":"ask"}` inbox commands.
 - `inbox/*.json` — commands written by the Lightfern views:
   `{"cmd":"learn"|"override"|"ask", …}`; polled every 1s, applied through the

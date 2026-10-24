@@ -197,6 +197,9 @@ def _write_status() -> None:
             pass
         payload = {
             "ts": _utc_ts(),
+            "heartbeat_ts": _utc_ts(),  # re-written every ~1s while the
+            #                          # bridge thread runs — the app view
+            #                          # shows CONNECTED/STALE off this
             "live": True,
             "mode": slack_feed.MODE,
             "checks_total": _state["checks_total"],

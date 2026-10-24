@@ -23,12 +23,17 @@ auditability ("why was this flagged?" must cite evidence), and working software.
   round_staging_queue.json (mock Round pickup queue)
 - `backend/company_brain.json` — the knowledge base: financial_rules,
   signed_contracts (incl. bank_iban), engineering_status, people,
-  known_sender_domains
+  known_sender_domains (added by a phase prompt — may not exist yet)
 - `backend/scenarios.json` — the 4 demo texts (smoke test reads these)
 - `backend/llm_enrich.py` — optional OpenAI second stage (fail-open)
 - `demo/index.html` — flagship single-file demo UI (served at /)
 - `demo/inspector.html` — compliance console (brain + audit + health)
-- `plugin/` — adapter.js (only backend client), simulator.html, rules.js
+- `plugin/` — adapter.js (only backend client), simulator.html;
+  rules.js is a planned offline-rules port (may not exist yet)
+
+Work happens in sequential phases on branches `<name>/phase<N>`. If a
+referenced file or brain key doesn't exist, a teammate's phase may not
+have merged yet — treat it as pending, not missing.
 - `pitch/` — submission, script, rehearsal sheet, one-pager
 - `CONTRACT.md` — the API contract. **Additive only — never rename/remove fields.**
 
@@ -45,7 +50,8 @@ Backend must work with `OPENAI_API_KEY` unset — no exceptions.
 
 ## Non-negotiables
 
-- The 4 smoke-test results never change: sales_email→FINANCIAL_POLICY+
+- The baseline smoke-test results never change (a 5th optional scenario may
+  be added later — additions fine, the original 4 stay identical): sales_email→FINANCIAL_POLICY+
   MARGIN_BREACH+TREASURY_LOCK · vendor_invoice→CRITICAL PAYMENT_REDIRECTION+
   2 CONTRACT_OVERAGE · support_reply→2 PROMISE_BREACH · clean_email→CLEAN
 - Every violation cites evidence — a brain_key, expected vs found value

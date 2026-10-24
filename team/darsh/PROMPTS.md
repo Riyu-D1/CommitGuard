@@ -97,10 +97,10 @@ WORKING RULES — follow exactly:
 - DONE WHEN: every item is complete AND every VERIFY command produces the stated output. Before finishing, re-check each numbered item against your changes. Partial completion is a failure.
 - FREEDOM: behaviors, category names, evidence shapes, and message strings in this spec are exact (they're the product contract). Everything else — helper structure, regex details, code organization, extra edge-case handling — is yours to improve. If you see a cleaner or more robust approach that passes the same VERIFY, take it, and note any spec deviation in your final summary.
 
-VERIFY — run and paste output:
+VERIFY — run and paste output (server may already be running; if a curl fails, start it first: `cd backend && uv run uvicorn main:app --port 8000`):
 - cd backend && uv run python smoke_test.py → all pass
-- POST /execute-action {"action_type":"STAGE_INVOICE","payload":{"vendor":"TestVendor","invoice":"T-1","amount":100}} twice → second returns success:false + error:"duplicate"; GET /audit-log shows both entries (staged + duplicate_rejected)
-- python -c "import actions; print(actions.read_audit(10, type='STAGE_INVOICE'))" works
+- Run twice: curl -s -X POST 127.0.0.1:8000/execute-action -H 'Content-Type: application/json' -d '{"action_type":"STAGE_INVOICE","payload":{"vendor":"TestVendor","invoice":"T-1","amount":100}}' → first succeeds, second returns success:false + error:"duplicate"; then curl -s 127.0.0.1:8000/audit-log shows both entries (staged + duplicate_rejected)
+- cd backend && uv run python -c "import actions; print(actions.read_audit(10, type='STAGE_INVOICE'))" works
 ```
 
 ## Phase 3 — context filtering + unverified-claim rule + brain expansion

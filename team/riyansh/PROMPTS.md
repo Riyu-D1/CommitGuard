@@ -52,12 +52,12 @@ WORKING RULES — follow exactly:
 - DONE WHEN: every item is complete AND every VERIFY command produces the stated output. Before finishing, re-check each numbered item against your changes. Partial completion is a failure.
 - FREEDOM: response shapes, error bodies, function signatures, and message strings in this spec are exact (they're the product contract). Implementation details — helper organization, middleware structure, schema construction — are yours to improve. If you see a cleaner or more robust approach that passes the same VERIFY, take it, and note any spec deviation in your final summary.
 
-VERIFY — run and paste output:
+VERIFY — run and paste output (server may already be running; if a curl fails, start it first: `cd backend && uv run uvicorn main:app --port 8000`):
 - cd backend && uv run python smoke_test.py → all 4 pass, identical results
 - curl -s 127.0.0.1:8000/health → ok:true
-- POST /verify-batch with 2 items → {"results":[...]}
-- POST /verify-context with "  " text → 422 {"error":"text must be non-empty"}
-- POST /verify-context with context_type "bogus" → 422 {"error":...}
+- curl -s -X POST 127.0.0.1:8000/verify-batch -H 'Content-Type: application/json' -d '{"items":[{"text":"we can offer Net-60","context_type":"outgoing_email"},{"text":"signed off, Net-30","context_type":"general"}]}' → {"results":[...]} with a violation then CLEAN
+- curl -s -X POST 127.0.0.1:8000/verify-context -H 'Content-Type: application/json' -d '{"text":"   "}' → 422 {"error":"text must be non-empty"}
+- curl -s -X POST 127.0.0.1:8000/verify-context -H 'Content-Type: application/json' -d '{"text":"hello","context_type":"bogus"}' → 422 {"error":...}
 - GET /audit-log?type=STAGE_INVOICE → 200 (empty array is fine)
 - GET /docs → all endpoints have summaries
 ```
@@ -106,10 +106,10 @@ WORKING RULES — follow exactly:
 - DONE WHEN: every item is complete AND every VERIFY command produces the stated output. Before finishing, re-check each numbered item against your changes. Partial completion is a failure.
 - FREEDOM: response shapes, error bodies, function signatures, and message strings in this spec are exact (they're the product contract). Implementation details — helper organization, middleware structure, schema construction — are yours to improve. If you see a cleaner or more robust approach that passes the same VERIFY, take it, and note any spec deviation in your final summary.
 
-VERIFY — run and paste output:
-- cd backend && env -u OPENAI_API_KEY uv run python -c "import llm_enrich; print(llm_enrich.llm_enabled())" → False, no error
-- cd backend && env -u OPENAI_API_KEY uv run python smoke_test.py → all pass
-- (if a key is available) OPENAI_API_KEY=... uv run python -c "import llm_enrich,json;print(llm_enrich.llm_enrich('we can do net-90 and 40% off','outgoing_email',[],json.load(open('company_brain.json'))))"
+VERIFY — run all from the backend/ directory and paste output:
+- env -u OPENAI_API_KEY uv run python -c "import llm_enrich; print(llm_enrich.llm_enabled())" → False, no error
+- env -u OPENAI_API_KEY uv run python smoke_test.py → all pass
+- (only if an OpenAI key is available — skip otherwise, it's optional): OPENAI_API_KEY=... uv run python -c "import llm_enrich,json;print(llm_enrich.llm_enrich('we can do net-90 and 40% off','outgoing_email',[],json.load(open('company_brain.json'))))"
 ```
 
 ## Phase 3 — E2E proof + integration check

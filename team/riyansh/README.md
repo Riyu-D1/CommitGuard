@@ -1,40 +1,24 @@
-# Riyansh — Plugin Lead + Tech Lead
+# Riyansh — backend API + LLM · merge-master
 
-Everyone codes via agents all day. Your workstream: `plugin/` (all) +
-`backend/llm_enrich.py` + merge-master. **Your build lives in `PROMPTS.md` —
-execute it top-to-bottom; the phases map to the day's schedule.**
+**Your files:** `backend/main.py`, `backend/llm_enrich.py`
+**Never touch:** other backend files (Darsh) · `demo/` `plugin/` `pitch/` (Pranali)
 
-## Your files (nobody else touches them)
+## The day
 
-- `plugin/` — adapter, simulator, real SDK port, SDK notes, E2E script
-- `backend/llm_enrich.py` — optional OpenAI second stage
+Paste phase prompts from `PROMPTS.md` in order (1 → 4). Between phases you merge
+everyone's PRs: **Darsh → Pranali → yours**. Run
+`cd backend && uv run python smoke_test.py` before your own merge — `main` must
+always stay runnable.
 
-## Phase map
+## Lead duties
 
-| Phase | Time | Prompts | Done when |
-|---|---|---|---|
-| 1 — Foundation | 10:45–11:15 | A (adapter.js) → B (simulator.html) | Full plugin UX verified against simulated host — before SDK is even understood |
-| 2 — Real SDK | 11:15–13:00 | C (skeleton, fill `[SDK]` slots) → D (full cards in host) | Violation card renders in the real runtime → **M1** |
-| 3 — LLM + hardening | 13:00–14:30 | E (llm_enrich.py) → F (E2E script) | rules+llm verified with/without key → **M2** |
-| 4 — Conditional | — | G (badge fallback, only if called) · H (stretch) | — |
+- **11:15** — register Finance/Ops track. Non-negotiable.
+- **10:00 SDK demo** — note the real plugin API; if viable, fill the `[SDK:]`
+  slots in Pranali's conditional plugin prompt and hand it to her.
+- **12:30** — fallback call: no real plugin by then → demo-only, don't look back.
+- **15:30** — freeze. Demo-blockers only.
 
-## Lead duties (parallel to your prompts)
+## Stuck?
 
-- **10:45–11:15:** register team on **Finance/Ops track**. Non-negotiable.
-- **Merge-master:** at each checkpoint merge `darsh/*` → `pranali/*` → `riyansh/*`.
-  `main` must always run `cd backend && uv run uvicorn main:app --port 8000`.
-- **12:30 fallback call:** no card in the real runtime by then → Prompt G + declare
-  the level below. Say it out loud, move on.
-- **15:30 freeze:** you call it, you enforce it.
-
-## Fallback ladder
-1. Full plugin card UI ← target
-2. Badge "⚠ N violations" + "Open details" → 127.0.0.1:8000 (Prompt G)
-3. demo/index.html standalone
-4. Pranali's backup video
-
-## Golden rules
-- Every prompt ends with VERIFY — do it, don't skip.
-- `main` stays runnable after every merge.
-- `simulator.html` is ALSO a demo asset — if the plugin path dies, it demos the
-  exact same UX. Keep it working.
+`smoke_test.py` is the safety net. Paste errors back to your agent; >10 min →
+debug yourself or cut the feature.

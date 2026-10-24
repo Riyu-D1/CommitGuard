@@ -16,13 +16,11 @@ exists so three agents never touch the same file → PRs merge clean every time.
 
 | Person | Owns | Never touches |
 |---|---|---|
-| **Riyansh** — Plugin + Tech Lead | `plugin/` (all), `backend/llm_enrich.py`, merge-master | `backend/rules.py`, `actions.py`, `demo/` |
-| **Darsh** — Backend rules, actions & brain | `backend/rules.py`, `backend/actions.py`, `backend/company_brain.json`, `backend/smoke_test.py`, `backend/bench.py` | `main.py`, `llm_enrich.py`, `demo/`, `plugin/`, `scenarios.json` |
-| **Pranali** — Frontends + content | `demo/` (all), `pitch/` (all), `backend/scenarios.json` (data only) | `backend/*.py`, `plugin/` |
+| **Riyansh** — Backend API + LLM · merge-master | `backend/main.py`, `backend/llm_enrich.py` | other backend files, `demo/`, `plugin/`, `pitch/` |
+| **Darsh** — Backend rules, actions & data | `backend/rules.py`, `actions.py`, `company_brain.json`, `scenarios.json`, `smoke_test.py`, `bench.py`, `seed_audit.py` | `main.py`, `llm_enrich.py`, `demo/`, `plugin/`, `pitch/` |
+| **Pranali** — All frontend | `demo/` (all), `plugin/` (all), `pitch/` (all) | `backend/` (everything) |
 
-`backend/main.py` is **frozen/shared** — thin orchestration only, changes by PR with
-a flag to the whole team. Shared docs (`CONTRACT.md`, `TEAM_PLAN.md`, `README.md`):
-PR + flag in chat.
+Shared docs (`CONTRACT.md`, `TEAM_PLAN.md`, `README.md`, `TOMORROW.md`): PR + flag in chat.
 
 ## Git workflow
 
@@ -37,7 +35,7 @@ PR + flag in chat.
 
 - [ ] `POST /verify-batch` endpoint (array of texts → array of results) — needs main.py flag
 - [ ] Second client: `slack_message` context_type scenario + any rule tweaks
-- [ ] `pitch/one-pager.html` judge handout (Pranali's Prompt F)
+- [ ] `pitch/one-pager.html` judge handout (Pranali)
 - [ ] Latency stat for pitch (Darsh's bench.py)
 - [ ] Demo seed: pre-fill audit_log.jsonl with 5 realistic entries so Inspector isn't empty at demo time
 
@@ -46,9 +44,9 @@ PR + flag in chat.
 | Time | Gate | Everyone |
 |---|---|---|
 | 09:30–10:45 | — | Venue, talks. Riyansh notes Lightfern plugin SDK shape from demo. All: skim your `team/<name>/README.md`. |
-| 10:45–11:15 | **Register Finance/Ops track** (Riyansh) | Riyansh: plugin hello-world. Darsh: env up, `smoke_test.py` green. Pranali: demo runs at :8000 on venue wifi, starts submission blurb. |
-| 11:15–13:00 | **M1 — working slice** | Riyansh: plugin calls `/verify-context` + renders 1 card. Darsh: rules v2 merged. Pranali: demo v2 (inline highlights) + scenario rewrites drafted. **12:30 = Riyansh's fallback call.** |
-| 13:00–14:30 | **M2 — integrated** | Riyansh: buttons → `/execute-action` + LLM enrich. Darsh: action hardening + `/health`. Pranali: scenarios encoded, **backup video DONE**, pitch rehearsed. |
+| 10:45–11:15 | **Register Finance/Ops track** (Riyansh) | Riyansh: watches SDK demo, fills `[SDK:]` slots in Pranali's conditional plugin prompt, hands it to her. Darsh: env up, `smoke_test.py` green. Pranali: demo runs at :8000 on venue wifi. |
+| 11:15–13:00 | **M1 — working slice** | Riyansh: main.py hardening merged. Darsh: rules v2 merged. Pranali: demo polish (+ plugin port if SDK is real). **12:30 = Riyansh's fallback call.** |
+| 13:00–14:30 | **M2 — integrated** | Riyansh: llm_enrich merged. Darsh: action hardening merged. Pranali: **backup video DONE**, pitch rehearsed. |
 | 14:30–15:30 | **M3 — freeze** | Feature freeze. Pranali leads pitch rehearsal x3; others fix only demo-blockers. |
 | 15:30–16:00 | Submit | Final PR merged. **Pranali submits** from `pitch/submission.md` — before 16:00, not at it. |
 

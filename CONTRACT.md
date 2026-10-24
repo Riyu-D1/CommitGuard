@@ -1,9 +1,9 @@
 # API Contract — DO NOT BREAK without flagging the team
 
-This file is the stability boundary between Riyansh (plugin + llm_enrich.py),
-Darsh (rules.py + actions.py + brain), and Pranali (demo + scenarios). You may
-ADD fields; you may NOT rename or remove fields without a PR comment that
-everyone acknowledges.
+This file is the stability boundary between Riyansh (main.py + llm_enrich.py),
+Darsh (rules.py + actions.py + brain + scenarios), and Pranali (all frontend).
+You may ADD fields; you may NOT rename or remove fields without a PR comment
+that everyone acknowledges.
 
 Backend base URL: `http://127.0.0.1:8000` (local, no auth, CORS open).
 NOTE: use `127.0.0.1`, not `localhost` — on some Macs `localhost` resolves to

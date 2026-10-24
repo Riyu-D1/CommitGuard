@@ -22,12 +22,9 @@ uv run uvicorn main:app --port 8000
 
 | Path | Owner | What |
 |---|---|---|
-| `backend/rules.py` `actions.py` `company_brain.json` `smoke_test.py` | Darsh | Deterministic engine + action handlers + brain data |
-| `backend/llm_enrich.py` | Riyansh | Optional OpenAI structured-output stage (fail-open) |
-| `backend/main.py` | frozen/shared | Thin FastAPI orchestration — PR + flag to change |
-| `plugin/` | Riyansh | Lightfern plugin + simulator (thin clients) |
-| `demo/` | Pranali | Demo UI (`/`)+ Inspector compliance console (`/inspector.html`) |
-| `pitch/` | Pranali | Script, submission, rehearsal sheet, backup video |
+| `backend/rules.py` `actions.py` `company_brain.json` `scenarios.json` `smoke_test.py` `bench.py` `seed_audit.py` | Darsh | Deterministic engine + action handlers + brain data + tests |
+| `backend/main.py` `llm_enrich.py` | Riyansh | FastAPI orchestration + optional OpenAI stage (fail-open) |
+| `demo/` `plugin/` `pitch/` | Pranali | All frontend: demo UI, Inspector, simulator/plugin, pitch assets |
 | `team/` | all | Per-person phase plans + agent prompts (`team/riyansh`, `team/darsh`, `team/pranali`) |
 | `TOMORROW.md` | shared | **Day-of runbook — the only doc you need open** |
 | `CONTRACT.md` | shared | API contract — read before coding |

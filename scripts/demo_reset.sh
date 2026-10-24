@@ -45,6 +45,50 @@ def blank_array(text, key):
 
 for key in ("learned_rules", "learned_exceptions"):
     src = blank_array(src, key)
+
+# riyansh/chaser: clear every invoice chase_log and undo chaser-marked
+# 'paid' statuses (chase_paid_from holds the status to restore). Surgical
+# when invoices are single-line objects (the committed style); falls back
+# to a normalised rewrite if the file was already reserialised.
+import json
+lines = src.splitlines(keepends=True)
+chaser_state = False
+surgical = True
+for _n, _l in enumerate(lines):
+    if '"kind": "receivable"' not in _l:
+        continue
+    try:
+        obj = json.loads(_l.strip().rstrip(","))
+    except Exception:
+        surgical = False
+        break
+    if not isinstance(obj, dict) or "id" not in obj:
+        continue
+    if "chase_paid_from" in obj or obj.get("chase_log"):
+        chaser_state = True
+        if "chase_paid_from" in obj:
+            obj["status"] = obj.pop("chase_paid_from")
+        obj["chase_log"] = []
+        trailing = "," if _l.rstrip().endswith(",") else ""
+        nl = "\n" if _l.endswith("\n") else ""
+        ind = _l[:len(_l) - len(_l.lstrip())]
+        lines[_n] = ind + json.dumps(obj, ensure_ascii=False) + trailing + nl
+if surgical:
+    src = "".join(lines)
+else:
+    data = json.loads(src)
+    for inv in data.get("finance", {}).get("invoices", []):
+        if "chase_paid_from" in inv:
+            inv["status"] = inv.pop("chase_paid_from")
+            chaser_state = True
+        if inv.get("chase_log"):
+            inv["chase_log"] = []
+            chaser_state = True
+    if chaser_state:
+        src = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+if chaser_state:
+    print("brain: invoice chase_log cleared, chaser 'paid' statuses restored")
+
 p.write_text(src)
 print("brain: learned_rules + learned_exceptions reset to []")
 PY

@@ -10,3 +10,12 @@ brain_changelog.jsonl
 .env
 .DS_Store
 .design-refs/
+
+# Lightfern dev harness — proof-only package, never shipped inside the app
+lightfern/dev/node_modules/
+lightfern/dev/harness/bundle.js
+.playwright-mcp/
+
+# Lightfern runtime artifacts (the bridge writes these at runtime)
+lightfern/CommitGuard Brain/live/answers/*.json
+lightfern/CommitGuard Brain/inbox/done/*.json

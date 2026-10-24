@@ -979,6 +979,31 @@ def explain_policy(question: str, brain: dict) -> dict:
     invoices = fin_section.get("invoices", [])
     people_map = brain.get("people", {})
 
+    def _tiers_bands():
+        """'band: approver names' for finance.spend_approvals — the
+        authoritative spend model. The flat internal_policies note only
+        covers the CFO band; use this whenever tiers exist."""
+        parts, prev = [], 0
+        for t in fin_section.get("spend_approvals", []):
+            names = " + ".join(people_map.get(r, r)
+                              for r in t.get("approvers", []))
+            cap = t.get("max_gbp")
+            band = (f"over £{prev:,}" if cap is None
+                    else f"£{prev:,}–£{cap:,}" if prev
+                    else f"up to £{cap:,}")
+            parts.append(f"{band}: {names}")
+            prev = cap or prev
+        return parts
+
+    def _tiers_answer():
+        bands = _tiers_bands()
+        if not bands:
+            return None
+        return _ans("Spend approvals — " + "; ".join(bands) + ".",
+                    ("finance.spend_approvals",
+                     fin_section["spend_approvals"]),
+                    ("people", people_map))
+
     if "runway" in q or ("burn" in q and "rate" not in q):
         bank = fin_section.get("bank", {})
         bal, burn = bank.get("balance_gbp"), bank.get("monthly_burn_gbp")
@@ -1022,24 +1047,9 @@ def explain_policy(question: str, brain: dict) -> dict:
     if any(k in q for k in ("who approves", "who can approve", "approver",
                             "approval tier", "spend over", "approve spend",
                             "how much can i spend", "spending limit")):
-        tiers = fin_section.get("spend_approvals", [])
-        if not tiers:
-            return _ans("No spend-approval tiers in the brain yet.",
-                        ("finance.spend_approvals", tiers))
-        parts = []
-        prev = 0
-        for t in tiers:
-            names = " + ".join(people_map.get(r, r)
-                               for r in t.get("approvers", []))
-            cap = t.get("max_gbp")
-            band = (f"over £{prev:,}" if cap is None
-                    else f"£{prev:,}–£{cap:,}" if prev
-                    else f"up to £{cap:,}")
-            parts.append(f"{band}: {names}")
-            prev = cap or prev
-        return _ans("Spend approvals — " + "; ".join(parts) + ".",
-                    ("finance.spend_approvals", tiers),
-                    ("people", people_map))
+        out = _tiers_answer()
+        return out or _ans("No spend-approval tiers in the brain yet.",
+                           ("finance.spend_approvals", []))
 
     if any(k in q for k in ("bank", "iban", "sort code", "account number",
                             "payment details", "change of bank")):
@@ -1089,6 +1099,9 @@ def explain_policy(question: str, brain: dict) -> dict:
 
     if any(k in q for k in ("expense", "spend", "purchase", "buy",
                             "company card", "corporate card")):
+        out = _tiers_answer()
+        if out:
+            return out
         lim = pol.get("expense_approval_limit_gbp")
         return _ans(f"Any spend over £{lim:,} needs CFO approval first.",
                     ("internal_policies.expense_approval_limit_gbp", lim),
@@ -1097,6 +1110,9 @@ def explain_policy(question: str, brain: dict) -> dict:
 
     if any(k in q for k in ("approval", "approve", "commitment", "sign-off",
                             "signoff")):
+        out = _tiers_answer()
+        if out:
+            return out
         thr = fin.get("cfo_approval_required_over_gbp")
         return _ans(f"Commitments over £{thr:,} need CFO approval "
                     f"({people.get('cfo', 'the CFO')}) before sending.",
@@ -1134,12 +1150,15 @@ def explain_policy(question: str, brain: dict) -> dict:
 
     if any(k in q for k in ("rule", "rules", "policy", "policies", "allowed",
                             "not allowed")):
+        bands = _tiers_bands()
+        spend_rule = ("spend approvals " + "; ".join(bands) if bands
+                      else "spend over "
+                      f"£{pol.get('expense_approval_limit_gbp', 0):,} needs "
+                      "CFO approval")
         return _ans("Headline rules: Net-30 terms max, discounts "
                     f"≤{fin.get('max_unapproved_discount_percent')}%, monthly "
-                    "billing only, spend over "
-                    f"£{pol.get('expense_approval_limit_gbp', 0):,} needs CFO "
-                    "approval, per-seat pricing floors, and customer names "
-                    "never sit next to revenue figures.",
+                    f"billing only, {spend_rule}, per-seat pricing floors, "
+                    "and customer names never sit next to revenue figures.",
                     ("financial_rules", fin),
                     ("internal_policies", pol),
                     ("company", brain.get("company", {})))

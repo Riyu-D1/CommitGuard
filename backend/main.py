@@ -1,4 +1,5 @@
 import json
+import re
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -18,6 +19,8 @@ import slack_feed
 import tribal_sync
 import brain_store
 import audit_trace
+import lightfern_bridge
+import chaser
 from llm_enrich import llm_enrich, llm_enabled, llm_polish_answer
 
 from rules import explain_policy, policy_cards
@@ -27,11 +30,21 @@ BRAIN_PATH = BASE / "company_brain.json"
 
 @asynccontextmanager
 async def lifespan(_app):
+    lightfern_bridge.start(hooks={
+        "learn": _learn,
+        "exception": _learn_exception,
+        "override": _apply_override,
+        "ask": _ask_brain,
+        "import_brain": _import_brain,
+    })
     slack_feed.start(verify_fn=_verify, scenarios=SCENARIOS,
                      ask_fn=_ask_brain, override_fn=_slack_override,
                      decision_fn=_decision_for_item,
-                     proposal_fn=_proposal_decision)
+                     proposal_fn=_proposal_decision,
+                     chase_fn=_chase_draft, chase_command_fn=_chase_cmd)
+    slack_feed.add_feed_listener(_chase_signal)
     yield
+    lightfern_bridge.stop()
 
 
 app = FastAPI(title="CommitGuard", version="1.0.0", lifespan=lifespan)
@@ -171,7 +184,7 @@ def _verify(text: str, context_type: str) -> dict:
             "rules_ms": rules_ms,
         },
     }
-    result["actions"] = actions.plan_actions(result, brain)
+    result["actions"] = actions.plan_actions(result, brain, text=text)
     return result
 
 
@@ -238,7 +251,9 @@ def verify_context(req: VerifyRequest):
     err = _validate(req.text, req.context_type)
     if err:
         return err
-    return _verify(req.text, req.context_type)
+    result = _verify(req.text, req.context_type)
+    lightfern_bridge.record_api_check(req.text, req.context_type, result)
+    return result
 
 
 @app.post("/verify-batch",
@@ -253,15 +268,32 @@ def verify_batch(req: VerifyBatchRequest):
         err = _validate(it.text, it.context_type)
         if err:
             return err
-    return {"results": [_verify(it.text, it.context_type) for it in req.items]}
+    results = []
+    for it in req.items:
+        res = _verify(it.text, it.context_type)
+        lightfern_bridge.record_api_check(it.text, it.context_type, res)
+        results.append(res)
+    return {"results": results}
+
+
+_OWES_RE = re.compile(
+    r"(?i)\b(who\s+owes|owe[sd]?\s+us|owed|what'?s\s+overdue|whats\s+overdue|"
+    r"overdue\s+receiv|receivables?|outstanding\s+(invoices?|money)|"
+    r"who\s+hasn'?t\s+paid|haven'?t\s+paid)\b")
 
 
 def _ask_brain(question: str) -> dict:
     """Shared ask-the-brain logic for POST /ask and Slack questions.
     Deterministic first; if OPENAI_API_KEY is set the answer is rephrased
-    in friendlier words (sources untouched), failing open."""
+    in friendlier words (sources untouched), failing open.
+
+    Receivables questions ('who owes us money', 'what's overdue') are
+    answered by the chaser's ageing summary — same response shape."""
     t0 = time.time()
-    out = explain_policy(question, COMPANY_BRAIN)
+    if _OWES_RE.search(question or ""):
+        out = chaser.ask_summary(COMPANY_BRAIN)
+    else:
+        out = explain_policy(question, COMPANY_BRAIN)
     engine = "rules"
     if out.get("matched"):
         polished = llm_polish_answer(question, out["answer"])
@@ -420,6 +452,33 @@ def _learn(phrase, category, severity, issue, correction, source_feed_id):
     return stored, None
 
 
+def _learn_exception(phrase, category, note=None, source_feed_id=None):
+    """Shared learned-exception logic — used by _apply_override and by the
+    Lightfern bridge for 'fine' commands on entries with no feed id.
+    Returns (stored_exception, error_response)."""
+    try:
+        stored = rules.add_learned_exception({
+            "phrase": phrase, "category": category, "note": note,
+            "source_feed_id": source_feed_id})
+    except ValueError as e:
+        return None, JSONResponse(status_code=422,
+                                  content={"error": str(e)})
+    global COMPANY_BRAIN
+    new_brain = load_brain()
+    if new_brain:
+        COMPANY_BRAIN = new_brain
+    return stored, None
+
+
+def _import_brain(brain: dict) -> None:
+    """Swap the whole brain for a dict edited inside Lightfern: atomic write
+    to company_brain.json, then in-memory swap. The bridge validates the
+    shape before calling this."""
+    global COMPANY_BRAIN
+    rules._write_brain(brain, BRAIN_PATH)
+    COMPANY_BRAIN = brain
+
+
 @app.post("/learn",
           summary="Teach the engine a new rule from a human correction",
           description="Stores {phrase, category, severity, issue, correction} in "
@@ -553,17 +612,11 @@ def _apply_override(feed_id, decision, phrase=None, note=None, category=None):
             return None, JSONResponse(status_code=422, content={
                 "error": "phrase is required — item violations have no "
                          "span text to default to"})
-        try:
-            exception = rules.add_learned_exception({
-                "phrase": ph, "category": cat, "note": note,
-                "source_feed_id": feed_id})
-        except ValueError as e:
-            return None, JSONResponse(status_code=422,
-                                      content={"error": str(e)})
+        exception, err = _learn_exception(ph, cat, note=note,
+                                          source_feed_id=feed_id)
+        if err:
+            return None, err
         used_phrase = ph
-        new_brain = load_brain()
-        if new_brain:
-            COMPANY_BRAIN = new_brain
     if decision in ("missed", "false_positive"):
         recheck = _verify(item["text"], item.get("context_type", "slack_message"))
         slack_feed.update_item(feed_id, recheck)
@@ -613,6 +666,16 @@ def feed_override(feed_id: int, req: OverrideRequest):
     return payload
 
 
+@app.get("/lightfern/status",
+         summary="Lightfern file-bridge status",
+         description="Returns {enabled, app_dir, last_export, last_inbox, "
+                     "checks_total, inbox_processed, feed_entries, errors}. "
+                     "enabled=false when LIGHTFERN_APP_DIR is unset — the "
+                     "backend then behaves exactly as without the bridge.")
+def lightfern_status():
+    return lightfern_bridge.status()
+
+
 @app.get("/slack/status",
          summary="Slack monitor mode and health",
          description="Returns {mode: 'slack' | 'simulated', channel, "
@@ -642,6 +705,147 @@ def inspector():
     if not path.exists():
         raise HTTPException(404, {"error": "inspector.html not built yet"})
     return FileResponse(path)
+
+
+# ---- invoice chaser (receivables) -------------------------------------------
+
+
+def _chase_draft(ref: str) -> dict:
+    """Shared draft logic for POST /chase and the Slack 'chase X' command.
+    The draft cites invoice/amount/due date/days overdue + prior promises;
+    context comes from the live feed. DRAFT ONLY — nothing is sent."""
+    return chaser.draft_chase(COMPANY_BRAIN, ref,
+                              feed_items=slack_feed.get_feed(limit=200))
+
+
+def _chase_cmd(ref, cmd):
+    """slack_feed thread-command hook for chase drafts ('log'/'paid').
+    Returns (payload, error_message) like _slack_override."""
+    global COMPANY_BRAIN
+    if not ref:
+        return None, "no invoice on this chase thread"
+    try:
+        if cmd == "paid":
+            res = chaser.mark_paid(ref, note="marked paid from Slack thread")
+        else:
+            res = chaser.log_chase(ref, channel="slack")
+    except Exception as e:
+        return None, str(e)
+    if res is None:
+        return None, f"no open receivable matching '{ref}'"
+    _reload_brain_after_chase()
+    if cmd == "paid":
+        return {"kind": "paid", "invoice_id": res["invoice_id"]}, None
+    return {"kind": "log", "invoice_id": ref, "entry": res}, None
+
+
+def _chase_signal(item: dict) -> None:
+    """Feed listener — 'Acme paid INV-1043' / 'Acme will pay Friday' style
+    messages update the receivable in the brain (atomic write)."""
+    global COMPANY_BRAIN
+    try:
+        updates = chaser.record_signal(COMPANY_BRAIN, item.get("text") or "",
+                                       source=item.get("source") or "feed",
+                                       brain_path=BRAIN_PATH)
+        if updates:
+            new_brain = load_brain()
+            if new_brain:
+                COMPANY_BRAIN = new_brain
+            lightfern_bridge.export_brain(brain=COMPANY_BRAIN)
+    except Exception:
+        pass
+
+
+def _reload_brain_after_chase() -> None:
+    global COMPANY_BRAIN
+    new_brain = load_brain()
+    if new_brain:
+        COMPANY_BRAIN = new_brain
+    try:
+        lightfern_bridge.export_brain(brain=COMPANY_BRAIN)
+    except Exception:
+        pass
+
+
+class ChaseRequest(BaseModel):
+    invoice_id: Optional[str] = None
+    customer: Optional[str] = None
+
+
+class ChaseNoteRequest(BaseModel):
+    note: Optional[str] = None
+
+
+@app.get("/receivables",
+         summary="Who owes us money — receivables ageing",
+         description="Open receivables from finance.invoices with days "
+                     "overdue, ageing bucket (current / 1-30 / 31-60 / 60+), "
+                     "prior chase count, last recorded promise, and bucket + "
+                     "total sums. Paid invoices drop out automatically.")
+def get_receivables():
+    return chaser.ageing(COMPANY_BRAIN)
+
+
+@app.post("/chase",
+          summary="Draft a payment chase for an invoice or customer",
+          description="{invoice_id} or {customer} -> a DRAFT chase email on "
+                      "the tone ladder (friendly reminder -> firm -> final "
+                      "notice escalating to the CFO). Cites invoice no, "
+                      "amount, due date, days overdue and any prior promise; "
+                      "uses OpenAI when OPENAI_API_KEY is set and a "
+                      "deterministic template otherwise. Never sends.")
+def chase(req: ChaseRequest):
+    ref = req.invoice_id or req.customer
+    if not ref or not str(ref).strip():
+        return JSONResponse(status_code=422,
+                            content={"error": "invoice_id or customer is required"})
+    res = _chase_draft(str(ref))
+    if res.get("error"):
+        return JSONResponse(status_code=404, content={"error": res["error"]})
+    return res
+
+
+@app.post("/chase/{invoice_id}/log",
+          summary="Mark a drafted chase as sent",
+          description="Appends a 'chase' entry to the invoice's chase_log in "
+                      "the brain (atomic write) — the next draft counts it "
+                      "toward the tone ladder.")
+def chase_log(invoice_id: str, req: ChaseNoteRequest):
+    entry = chaser.log_chase(invoice_id, note=(req.note if req else None),
+                             channel="api")
+    if entry is None:
+        return JSONResponse(status_code=404,
+                            content={"error": f"no open receivable matching '{invoice_id}'"})
+    _reload_brain_after_chase()
+    return JSONResponse(status_code=201, content={
+        "logged": True, "invoice_id": invoice_id, "entry": entry})
+
+
+@app.post("/chase/{invoice_id}/paid",
+          summary="Mark a receivable as paid",
+          description="Sets the invoice status to paid (it drops out of "
+                      "/receivables) and appends a 'paid' row to chase_log. "
+                      "The previous status is kept in chase_paid_from.")
+def chase_paid(invoice_id: str, req: ChaseNoteRequest):
+    res = chaser.mark_paid(invoice_id, note=(req.note if req else None))
+    if res is None:
+        return JSONResponse(status_code=404,
+                            content={"error": f"no open receivable matching '{invoice_id}'"})
+    _reload_brain_after_chase()
+    return {"paid": True, "invoice_id": res["invoice_id"],
+            "from_status": res["from_status"], "entry": res["entry"]}
+
+
+@app.get("/chase/{invoice_id}/history",
+         summary="Chase history for an invoice",
+         description="The invoice's chase_log — every chase sent, promise "
+                     "recorded and paid event, oldest first.")
+def chase_history(invoice_id: str):
+    res = chaser.history(COMPANY_BRAIN, invoice_id)
+    if res is None:
+        return JSONResponse(status_code=404,
+                            content={"error": f"no receivable matching '{invoice_id}'"})
+    return res
 
 
 @app.get("/",

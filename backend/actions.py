@@ -9,7 +9,7 @@ the AuditTrace invoice-interceptor flow.
 import json
 import re
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import HTTPException
@@ -228,11 +228,44 @@ def _contract_phone(brain: dict, vendor):
     return None
 
 
-def plan_actions(result: dict, brain: dict) -> list:
+def _days_overdue(inv: dict, today: date) -> int:
+    try:
+        return max(0, (today - date.fromisoformat(str(inv.get("due_date", ""))[:10])).days)
+    except ValueError:
+        return 0
+
+
+def _chase_hands(text: str, brain: dict) -> list:
+    """Open receivables whose customer name or invoice no is mentioned in
+    `text` — e.g. 'Acme still hasn't paid'. Pure scan; returns
+    {invoice_id, counterparty, amount_gbp, days_overdue} rows."""
+    if not text:
+        return []
+    today = date.today()
+    hits = []
+    for inv in brain.get("finance", {}).get("invoices", []):
+        if inv.get("kind") != "receivable" or inv.get("status") == "paid":
+            continue
+        iid = str(inv.get("id") or "")
+        name = str(inv.get("counterparty") or "")
+        first = name.split()[0] if name else ""
+        if not ((iid and iid.lower() in text.lower()) or
+                (first and re.search(rf"(?i)\b{re.escape(first)}\b", text))):
+            continue
+        hits.append({"invoice_id": iid, "counterparty": name,
+                     "amount_gbp": inv.get("amount_gbp"),
+                     "days_overdue": _days_overdue(inv, today),
+                     "status": inv.get("status")})
+    return hits
+
+
+def plan_actions(result: dict, brain: dict, text: str = None) -> list:
     """Suggest next actions for a /verify-context result — pure, no side effects.
 
     Every target comes from the brain (people.cfo, finance_approval_channel);
-    nothing is hardcoded. Deduped by action type.
+    nothing is hardcoded. Deduped by action type. `text` (optional) is the
+    checked message — used to spot mentions of open receivables and offer a
+    CHASE_INVOICE draft.
     """
     violations = result.get("violations") or []
     cats = {v.get("category") for v in violations}
@@ -371,5 +404,18 @@ def plan_actions(result: dict, brain: dict) -> list:
                                    "label": "Apply suggested rewrite",
                                    "target": None,
                                    "payload": payload}
+
+    for hit in _chase_hands(text or "", brain):
+        label = (f"Draft chase for {hit['invoice_id']} — {hit['counterparty']} "
+                 f"£{(hit['amount_gbp'] or 0):,}"
+                 + (f", {hit['days_overdue']}d overdue"
+                    if hit["days_overdue"] else ""))
+        plan[f"CHASE_INVOICE:{hit['invoice_id']}"] = {
+            "type": "CHASE_INVOICE",
+            "label": label,
+            "target": hit["invoice_id"],
+            "payload": {"invoice_id": hit["invoice_id"],
+                        "customer": hit["counterparty"],
+                        "draft_only": True}}
 
     return list(plan.values())

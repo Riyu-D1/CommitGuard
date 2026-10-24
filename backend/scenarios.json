@@ -32,7 +32,7 @@
   "slack_demo_expense": {
     "label": "Slack demo — expense over limit",
     "context_type": "slack_message",
-    "text": "expensing the £6,800 monitoring tool — putting it on the company card this afternoon, too small to bug Amara right?"
+    "text": "expensing the £6,800 monitoring tool — putting it on the company card this afternoon, too small to bug Darsh right?"
   },
   "slack_demo_rev_leak": {
     "label": "Slack demo — revenue leak",
@@ -133,5 +133,20 @@
     "label": "Audit — clean invoice",
     "context_type": "incoming_invoice",
     "text": "INVOICE PPD-440\nPinnacle Print & Design — £1,800 monthly retainer\nIBAN GB33LOYD22334455\nPayment terms: Net-30"
+  },
+  "chase_who_owes": {
+    "label": "Chaser — who owes us money",
+    "context_type": "slack_message",
+    "text": "? who owes us money"
+  },
+  "chase_globex_mention": {
+    "label": "Chaser — overdue customer named",
+    "context_type": "slack_message",
+    "text": "Globex still hasn't paid INV-1048 — it's been sitting since the 20th"
+  },
+  "chase_promise_signal": {
+    "label": "Chaser — payment promise",
+    "context_type": "slack_message",
+    "text": "good news — Globex will pay INV-1048 on Friday, their AP confirmed"
   }
 }

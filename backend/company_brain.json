@@ -105,9 +105,9 @@
     }
   ],
   "people": {
-    "cfo": "Amara Osei",
-    "ceo": "Tom Ellery",
-    "team_lead": "Nadia Hussain",
+    "cfo": "Darsh",
+    "ceo": "Riyansh",
+    "team_lead": "Pranali",
     "finance_approval_channel": "#finance-approvals"
   },
   "finance": {
@@ -148,78 +148,17 @@
       }
     ],
     "invoices": [
-      {
-        "id": "INV-1043",
-        "kind": "payable",
-        "counterparty": "CloudScale Ltd",
-        "amount_gbp": 6200,
-        "due_date": "2026-10-28",
-        "status": "unpaid"
-      },
-      {
-        "id": "INV-1044",
-        "kind": "payable",
-        "counterparty": "Northwind Analytics",
-        "amount_gbp": 3200,
-        "due_date": "2026-10-30",
-        "status": "unpaid"
-      },
-      {
-        "id": "INV-1046",
-        "kind": "payable",
-        "counterparty": "WeWork City Road",
-        "amount_gbp": 2800,
-        "due_date": "2026-11-04",
-        "status": "unpaid"
-      },
-      {
-        "id": "INV-1037",
-        "kind": "payable",
-        "counterparty": "Meridian Security Ltd",
-        "amount_gbp": 4200,
-        "due_date": "2026-10-10",
-        "status": "overdue"
-      },
-      {
-        "id": "INV-1039",
-        "kind": "payable",
-        "counterparty": "Amazon Web Services",
-        "amount_gbp": 1140,
-        "due_date": "2026-10-15",
-        "status": "paid"
-      },
-      {
-        "id": "INV-1051",
-        "kind": "receivable",
-        "counterparty": "Acme Corp",
-        "amount_gbp": 48000,
-        "due_date": "2026-11-05",
-        "status": "unpaid"
-      },
-      {
-        "id": "INV-1049",
-        "kind": "receivable",
-        "counterparty": "Initech",
-        "amount_gbp": 12500,
-        "due_date": "2026-11-12",
-        "status": "unpaid"
-      },
-      {
-        "id": "INV-1048",
-        "kind": "receivable",
-        "counterparty": "Globex",
-        "amount_gbp": 31000,
-        "due_date": "2026-10-20",
-        "status": "overdue"
-      },
-      {
-        "id": "INV-1045",
-        "kind": "receivable",
-        "counterparty": "Umbrella Group",
-        "amount_gbp": 9300,
-        "due_date": "2026-10-02",
-        "status": "paid"
-      }
+      {"id": "INV-1043", "kind": "payable", "counterparty": "CloudScale Ltd", "amount_gbp": 6200, "due_date": "2026-10-28", "status": "unpaid"},
+      {"id": "INV-1044", "kind": "payable", "counterparty": "Northwind Analytics", "amount_gbp": 3200, "due_date": "2026-10-30", "status": "unpaid"},
+      {"id": "INV-1046", "kind": "payable", "counterparty": "WeWork City Road", "amount_gbp": 2800, "due_date": "2026-11-04", "status": "unpaid"},
+      {"id": "INV-1037", "kind": "payable", "counterparty": "Meridian Security Ltd", "amount_gbp": 4200, "due_date": "2026-10-10", "status": "overdue"},
+      {"id": "INV-1039", "kind": "payable", "counterparty": "Amazon Web Services", "amount_gbp": 1140, "due_date": "2026-10-15", "status": "paid"},
+      {"id": "INV-1051", "kind": "receivable", "counterparty": "Acme Corp", "amount_gbp": 48000, "due_date": "2026-11-05", "status": "unpaid", "owner": "Riyansh", "contact": {"name": "Priya Nair", "email": "ap@acme-corp.example"}, "chase_log": []},
+      {"id": "INV-1049", "kind": "receivable", "counterparty": "Initech", "amount_gbp": 12500, "due_date": "2026-11-12", "status": "unpaid", "owner": "Pranali", "contact": {"name": "Marcus Veil", "email": "billing@initech.example"}, "chase_log": []},
+      {"id": "INV-1048", "kind": "receivable", "counterparty": "Globex", "amount_gbp": 31000, "due_date": "2026-10-20", "status": "overdue", "owner": "Darsh", "contact": {"name": "Sam Ortega", "email": "finance@globex.example"}, "chase_log": []},
+      {"id": "INV-1047", "kind": "receivable", "counterparty": "Soylent Ltd", "amount_gbp": 7800, "due_date": "2026-09-14", "status": "overdue", "owner": "Pranali", "contact": {"name": "Dana Whitfield", "email": "accounts@soylent.example"}, "chase_log": []},
+      {"id": "INV-1041", "kind": "receivable", "counterparty": "Acme Corp", "amount_gbp": 22000, "due_date": "2026-08-15", "status": "overdue", "owner": "Riyansh", "contact": {"name": "Priya Nair", "email": "ap@acme-corp.example"}, "chase_log": []},
+      {"id": "INV-1045", "kind": "receivable", "counterparty": "Umbrella Group", "amount_gbp": 9300, "due_date": "2026-10-02", "status": "paid", "owner": "Darsh", "contact": {"name": "Ren Kohl", "email": "ar@umbrella.example"}, "chase_log": []}
     ],
     "bank": {
       "balance_gbp": 820000,

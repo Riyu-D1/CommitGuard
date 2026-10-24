@@ -40,8 +40,8 @@ IPv6 `::1` where uvicorn doesn't listen; this bit us in testing.
   ],
   "suggested_rewrite": "full-text rewrite | null",
   "actions": [
-    { "type": "HOLD_PAYMENT | ESCALATE | REQUEST_APPROVAL | BLOCK_AND_REDACT | SUGGEST_REWRITE | VERIFY_VENDOR | REQUEST_CREDIT_NOTE",
-      "label": "human-readable next step (targets come from the brain, e.g. 'Escalate to Amara Osei')",
+    { "type": "HOLD_PAYMENT | ESCALATE | REQUEST_APPROVAL | BLOCK_AND_REDACT | SUGGEST_REWRITE | VERIFY_VENDOR | REQUEST_CREDIT_NOTE | CHASE_INVOICE",
+      "label": "human-readable next step (targets come from the brain, e.g. 'Escalate to Darsh')",
       "target": "person/channel from the brain | null",
       "payload": { "...": "context for executing the action" } }
   ],
@@ -322,3 +322,37 @@ New execute-action types (additive): HOLD_PAYMENT (10-min dedupe like STAGE_INVO
 
 Feed items may carry "proposal" (the proposal dict) and "proposal_id" when they triggered one — additive fields.
 POST /feed/inject accepts optional "context_type" (default "slack_message", must be a valid context) so invoice texts can be pushed as incoming_invoice.
+
+## Lightfern bridge (see backend/lightfern_bridge.py)
+
+File-based integration, enabled only when `LIGHTFERN_APP_DIR` points at an
+installed `CommitGuard Brain` app folder. No new request shapes — the bridge
+mirrors what the existing endpoints already produce.
+
+### GET /lightfern/status
+
+```json
+{ "enabled": true, "app_dir": "…/CommitGuard Brain",
+  "last_export": "<iso ts>", "last_inbox": "<iso ts>",
+  "checks_total": 0, "inbox_processed": 0, "feed_entries": 0,
+  "errors": ["<recent bridge errors, newest first>"] }
+```
+
+`enabled: false` when `LIGHTFERN_APP_DIR` is unset — everything else behaves
+exactly as it does without the bridge.
+
+### Files the bridge owns inside the app folder
+
+- `brain/company_brain.json` + `brain/policies/*.md` — re-exported on startup
+  and after every learn/override. Edits made inside Lightfern are re-imported
+  (mtime check); invalid JSON is rejected and logged in `live/status.json`.
+- `live/feed.json` — last 100 checked items, appended after every
+  /verify-context, /verify-batch item, and Slack-feed check; atomic writes.
+- `live/status.json` — bridge heartbeat `{heartbeat_ts, mode, checks_total,
+  errors…}` rewritten ~every 1s while the bridge runs; the home view shows
+  CONNECTED vs STALE off `heartbeat_ts` (stale after ~15s).
+- `live/answers/<id>.json` — brain answers for `{"cmd":"ask"}` inbox commands.
+- `inbox/*.json` — commands written by the Lightfern views:
+  `{"cmd":"learn"|"override"|"ask", …}`; polled every 1s, applied through the
+  same functions as `POST /learn`, `POST /feed/{id}/override`, `POST /ask`,
+  then moved to `inbox/done/`.

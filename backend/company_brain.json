@@ -4,7 +4,8 @@
     "max_unapproved_discount_percent": 10,
     "treasury_lock": "Quarterly billing disabled for cash runway optimization; enforce 50% upfront.",
     "cfo_approval_required_over_gbp": 25000,
-    "refund_or_credit_cap_gbp": 500
+    "refund_or_credit_cap_gbp": 500,
+    "fraud_controls": "Urgency + bank-detail changes always require out-of-band verification."
   },
   "signed_contracts": [
     {
@@ -18,6 +19,12 @@
       "approved_monthly_retainer_gbp": 3200,
       "hourly_rate_gbp": 95,
       "bank_iban": "GB14MONODE87654321"
+    },
+    {
+      "vendor_name": "Meridian Security Ltd",
+      "approved_monthly_retainer_gbp": 4200,
+      "hourly_rate_gbp": 80,
+      "bank_iban": "GB77NWBK11223344"
     }
   ],
   "engineering_status": [
@@ -35,10 +42,16 @@
       "feature": "SSO / SAML support",
       "status": "In development, no committed date",
       "date": "2026-10-10"
+    },
+    {
+      "feature": "Bulkhead v2",
+      "status": "Planning — not started",
+      "date": "2026-10-20"
     }
   ],
   "people": {
     "cfo": "Amara Osei",
     "finance_approval_channel": "#finance-approvals"
-  }
+  },
+  "known_sender_domains": ["cloudscale.co.uk", "northwind-analytics.com", "yourcompany.com", "meridian-sec.com"]
 }

@@ -9,12 +9,14 @@ import re
 from typing import Any, Optional
 
 SEVERITY_ORDER = {"LOW": 0, "MEDIUM": 1, "HIGH": 2, "CRITICAL": 3}
+SEVERITY_RISK_SCORE = {"LOW": 20, "MEDIUM": 45, "HIGH": 70, "CRITICAL": 95}
 
 
 def _v(category, severity, issue, correction, evidence, span=None, fix=None):
     v = {
         "category": category,
         "severity": severity,
+        "risk_score": SEVERITY_RISK_SCORE.get(severity, 0),
         "issue": issue,
         "correction": correction,
         "evidence": evidence,
@@ -252,6 +254,127 @@ def check_refund_credits(text: str, brain: dict) -> list:
     return []
 
 
+_INVOICE_NO_RE = re.compile(r"\b[A-Z]{2,4}[-\s]?\d{3,}\b")
+_DUP_LANG_RE = re.compile(
+    r"(?i)\b(already paid|duplicate|second request|paid twice|settled last|"
+    r"resending|previously paid)\b")
+
+
+def check_duplicate_invoice(text: str, brain: dict) -> list:
+    dup = _DUP_LANG_RE.search(text)
+    if not dup:
+        return []
+    out = []
+    seen = set()
+    for m in _INVOICE_NO_RE.finditer(text):
+        if m.group(0) in seen:
+            continue
+        seen.add(m.group(0))
+        out.append(_v(
+            "DUPLICATE_INVOICE", "CRITICAL",
+            f"Invoice {m.group(0)} is flagged as a possible duplicate payment request.",
+            "Verify against the payment ledger before approving — duplicate invoice fraud is common.",
+            {"brain_key": "payment_ledger",
+             "expected": "no prior payment for this invoice", "found": dup.group(0)},
+            span={"text": m.group(0), "start": m.start(), "end": m.end()},
+        ))
+    return out
+
+
+_SENDER_RE = re.compile(
+    r"(?i)(?:from|reply-to):\s*(\S+@([A-Za-z0-9.-]+\.[A-Za-z]{2,}))")
+
+
+def check_sender_domain(text: str, brain: dict) -> list:
+    known_list = brain.get("known_sender_domains", [])
+    known = {d.lower() for d in known_list}
+    contract = _find_vendor(text, brain)
+    out = []
+    seen = set()
+    for m in _SENDER_RE.finditer(text):
+        email, domain = m.group(1), m.group(2).lower()
+        if domain in known or domain in seen:
+            continue
+        seen.add(domain)
+        if contract:
+            out.append(_v(
+                "SENDER_DOMAIN_MISMATCH", "CRITICAL",
+                f"Sender domain '{domain}' claimed to be from {contract['vendor_name']} — "
+                "this is a classic supplier-impersonation pattern.",
+                "Verify the sender out-of-band before acting on this message.",
+                {"brain_key": "known_sender_domains",
+                 "expected": known_list, "found": domain},
+                span={"text": email, "start": m.start(1), "end": m.end(1)},
+            ))
+        else:
+            out.append(_v(
+                "SENDER_DOMAIN_MISMATCH", "HIGH",
+                f"Sender domain '{domain}' is not a known supplier domain — "
+                "possible impersonation/phishing.",
+                "Verify the sender out-of-band before acting on this message.",
+                {"brain_key": "known_sender_domains",
+                 "expected": known_list, "found": domain},
+                span={"text": email, "start": m.start(1), "end": m.end(1)},
+            ))
+    return out
+
+
+_URGENCY_RE = re.compile(
+    r"(?i)\b(urgent|immediately|asap|today|by eod|end of day|time-sensitive|"
+    r"before close)\b")
+_PAYDETAIL_RE = re.compile(
+    r"(?i)\b(iban|sort code|bank details|account number|updated payment|"
+    r"new account|payment details|change of bank)\b")
+
+
+def check_urgent_payment_change(text: str, brain: dict) -> list:
+    urgencies = list(_URGENCY_RE.finditer(text))
+    if not urgencies:
+        return []
+    payments = list(_PAYDETAIL_RE.finditer(text))
+    for u in urgencies:
+        for p in payments:
+            if abs(u.start() - p.start()) <= 120:
+                lo, hi = min(u.start(), p.start()), max(u.end(), p.end())
+                return [_v(
+                    "URGENT_PAYMENT_CHANGE", "CRITICAL",
+                    "Urgency combined with a payment-detail change is the #1 invoice-fraud pattern.",
+                    "Never process bank-detail changes under time pressure — verify out-of-band first.",
+                    {"brain_key": "financial_rules.fraud_controls",
+                     "expected": "no urgency+bank-change combination",
+                     "found": f"{u.group(0)} + {p.group(0)}"},
+                    span={"text": text[lo:hi], "start": lo, "end": hi},
+                )]
+    return []
+
+
+_CERT_CLAIM_TOKENS = (
+    "soc 2", "iso 27001", "iso27001", "hipaa", "pci dss",
+    "pci-dss", "gdpr certified", "cyber essentials",
+)
+
+
+def check_unverified_claims(text: str, brain: dict) -> list:
+    corpus = " ".join(
+        f"{i.get('feature', '')} {i.get('status', '')}"
+        for i in brain.get("engineering_status", [])
+    ).lower()
+    out = []
+    for token in _CERT_CLAIM_TOKENS:
+        m = re.search(rf"(?i)\b{re.escape(token)}\b", text)
+        if not m or token in corpus:
+            continue  # not claimed, or covered by an engineering_status entry
+        out.append(_v(
+            "UNVERIFIED_CLAIM", "MEDIUM",
+            f"'{m.group(0)}' is asserted but has no backing entry in the company brain.",
+            "Remove the claim or add an authoritative source to the brain before sending.",
+            {"brain_key": "engineering_status",
+             "expected": f"a status entry covering {m.group(0)}", "found": "no entry"},
+            span={"text": m.group(0), "start": m.start(), "end": m.end()},
+        ))
+    return out
+
+
 ALL_CHECKS = [
     check_payment_terms,
     check_discount_cap,
@@ -261,12 +384,39 @@ ALL_CHECKS = [
     check_large_commitment,
     check_feature_claims,
     check_refund_credits,
+    check_duplicate_invoice,
+    check_sender_domain,
+    check_urgent_payment_change,
+    check_unverified_claims,
 ]
+
+# Which context_types each check runs in. "ALL" = fraud signatures that must
+# fire everywhere; a check absent from this map also defaults to "ALL".
+VALID_CONTEXT_TYPES = {"outgoing_email", "slack_message", "incoming_invoice", "general"}
+CONTEXTS = {
+    check_bank_details: "ALL",
+    check_duplicate_invoice: "ALL",
+    check_urgent_payment_change: "ALL",
+    check_amounts_vs_contract: {"incoming_invoice"},
+    check_sender_domain: {"incoming_invoice"},
+    check_payment_terms: {"outgoing_email", "slack_message", "general"},
+    check_discount_cap: {"outgoing_email", "slack_message", "general"},
+    check_treasury_lock: {"outgoing_email", "slack_message", "general"},
+    check_feature_claims: {"outgoing_email", "slack_message", "general"},
+    check_refund_credits: {"outgoing_email", "slack_message", "general"},
+    check_large_commitment: {"outgoing_email", "slack_message", "general"},
+    check_unverified_claims: {"outgoing_email", "slack_message", "general"},
+}
 
 
 def run_rules(text: str, brain: dict, context_type: Optional[str] = None) -> list:
     violations = []
+    filter_ctx = context_type if context_type in VALID_CONTEXT_TYPES else None
     for check in ALL_CHECKS:
+        allowed = CONTEXTS.get(check, "ALL")
+        if filter_ctx is not None and isinstance(allowed, set) \
+                and filter_ctx not in allowed:
+            continue
         violations.extend(check(text, brain))
     return violations
 

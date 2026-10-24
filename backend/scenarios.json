@@ -18,5 +18,10 @@
     "label": "Clean email - should pass",
     "context_type": "outgoing_email",
     "text": "Hi John,\n\nWe can offer Net-30 payment terms with a 10% discount on the migration, billed monthly with 50% upfront.\n\nBest,\nAlex"
+  },
+  "slack_urgent_fraud": {
+    "label": "Slack — urgent bank change",
+    "context_type": "slack_message",
+    "text": "@finance URGENT: CloudScale just sent over new bank details — can someone update payment details today? New IBAN GB22BARC99887766554, has to be done before close or Friday's payment run fails."
   }
 }

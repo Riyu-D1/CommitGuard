@@ -53,6 +53,16 @@ cd backend && uv run python seed_audit.py           # demo audit entries (--rese
 `audit_log.jsonl` and `round_staging_queue.json` are gitignored local state.
 Test curls write to them, so clean up test rows you create.
 
+**Never print backend/.env** — it can hold a real Slack token. If one is
+configured, any server you start polls and can post to the live channel
+(SLACK_REPLY=1). For local test servers always force simulated mode —
+real env wins over .env:
+
+```bash
+cd backend && SLACK_BOT_TOKEN=disabled SLACK_REPLY=0 SLACK_CHANNEL_ID= \
+  uv run uvicorn main:app --port 8000
+```
+
 Use `127.0.0.1`, never `localhost` (IPv6 resolution issue on some Macs).
 Backend must work with `OPENAI_API_KEY` unset — no exceptions.
 

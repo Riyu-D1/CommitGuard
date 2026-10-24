@@ -8,6 +8,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -30,6 +31,7 @@ async def lifespan(_app):
 
 app = FastAPI(title="CommitGuard", version="1.0.0", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+app.mount("/vendor", StaticFiles(directory=BASE.parent / "demo" / "vendor"), name="vendor")
 
 
 @app.exception_handler(StarletteHTTPException)

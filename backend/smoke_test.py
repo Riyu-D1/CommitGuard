@@ -106,6 +106,49 @@ expect("rule_covered_claim",
        "Here is our SOC 2 report for your review.",
        "outgoing_email", must_not_have={"UNVERIFIED_CLAIM"})
 
+# "urgently" must hit the same urgency pattern as "urgent".
+expect("rule_urgently",
+       "Please pay invoice 4411 to our new IBAN GB00 1234 urgently",
+       "incoming_invoice", must_have={"URGENT_PAYMENT_CHANGE"})
+
+# darsh/learn: runtime learned rules — temp brain copy, add "rebate", verify
+# it fires, verify re-adding dedupes, verify the real brain is untouched.
+import json  # noqa: E402
+import os  # noqa: E402
+import tempfile  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+_real_brain = (Path(main.BASE) / "company_brain.json").read_text()
+with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as _tf:
+    _tf.write(_real_brain)
+    _tmp_brain = _tf.name
+
+try:
+    _lr = rules.add_learned_rule(
+        {"phrase": "rebate",
+         "issue": "Rebate offers require CFO sign-off.",
+         "correction": "Remove the rebate offer or get CFO approval."},
+        brain_path=_tmp_brain)
+    _lr_brain = json.loads(Path(_tmp_brain).read_text())
+    _lr_violations = rules.run_rules("We can offer a rebate on renewal.",
+                                     _lr_brain, "outgoing_email")
+    _lr_again = rules.add_learned_rule({"phrase": "REBATE"},
+                                       brain_path=_tmp_brain)
+    _lr_ok = ("LEARNED_RULE" in {v["category"] for v in _lr_violations}
+              and _lr_again["id"] == _lr["id"]
+              and len(_lr_brain.get("learned_rules", [])) == 1
+              and (Path(main.BASE) / "company_brain.json").read_text()
+              == _real_brain)
+finally:
+    os.unlink(_tmp_brain)
+
+print(f"\n=== rule_learned: {'PASS' if _lr_ok else 'FAIL'}")
+for v in _lr_violations:
+    print(f"  [{v['severity']}] {v['category']}: {v['issue']}")
+if not _lr_ok:
+    failures.append("rule_learned: expected LEARNED_RULE hit + idempotent "
+                    "re-add + real brain untouched")
+
 if failures:
     print("\nFAILURES:")
     for f in failures:

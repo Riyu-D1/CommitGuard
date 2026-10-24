@@ -1,6 +1,6 @@
 # Spend approvals
 
-**Rule.** Spend tiers — up to £1,000: self; £1,000–£5,000: Nadia Hussain; £5,000–£25,000: Amara Osei; over £25,000: Amara Osei + Tom Ellery.
+**Rule.** Spend tiers — up to £1,000: self; £1,000–£5,000: Pranali; £5,000–£25,000: Darsh; over £25,000: Darsh + Riyansh.
 
 **Brain key.** `finance.spend_approvals`
 

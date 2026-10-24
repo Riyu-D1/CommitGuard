@@ -160,9 +160,24 @@ _CHASE_CMD_RE = re.compile(r"(?i)^\s*chase[:\s]+(.+?)\s*$")
 
 def _parse_chase(text):
     """'chase INV-1048' / 'chase Acme' (case-insensitive) -> the invoice or
-    customer ref to draft a chase for; otherwise None."""
+    customer ref to draft a chase for; otherwise None. 'chase close' is a
+    close command, not an invoice chase."""
     m = _CHASE_CMD_RE.match(text or "")
-    return m.group(1) if m else None
+    if not m or _close_command_text(text):
+        return None
+    return m.group(1)
+
+
+_CLOSE_CMD_RE = re.compile(
+    r"(?i)^\s*(close\s+status|close\s+nudges?|chase\s+close|"
+    r"what'?s\s+blocking\s+(the\s+)?close)\s*[?.!]*\s*$")
+
+
+def _close_command_text(text):
+    """'close status' / 'chase close' -> the command text (routed to the
+    close engine via ask_fn); otherwise None."""
+    t = (text or "").strip()
+    return t if _CLOSE_CMD_RE.match(t) else None
 
 
 def start(verify_fn, scenarios, ask_fn=None, override_fn=None,
@@ -226,9 +241,9 @@ def _push(text, source, user=None, channel=None,
             "actions": [],
             "meta": {"engine": res.get("engine", "rules")},
         }
-    elif (_parse_question(text) if source in ("slack", "manual")
-          and _ask is not None else None) is not None:
-        question = _parse_question(text)
+    elif (question := ((_parse_question(text) or _close_command_text(text))
+                       if source in ("slack", "manual") and _ask is not None
+                       else None)) is not None:
         res = _ask(question)
         item = {
             "ts": datetime.now(timezone.utc).isoformat(),

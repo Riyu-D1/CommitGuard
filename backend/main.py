@@ -14,14 +14,17 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 import rules
 import actions
 import slack_feed
-from llm_enrich import llm_enrich, llm_enabled
+from llm_enrich import llm_enrich, llm_enabled, llm_polish_answer
+
+from rules import explain_policy, policy_cards
 
 BASE = Path(__file__).parent
 BRAIN_PATH = BASE / "company_brain.json"
 
 @asynccontextmanager
 async def lifespan(_app):
-    slack_feed.start(verify_fn=_verify, scenarios=SCENARIOS)
+    slack_feed.start(verify_fn=_verify, scenarios=SCENARIOS,
+                     ask_fn=_ask_brain)
     yield
 
 
@@ -74,6 +77,10 @@ class ActionRequest(BaseModel):
 class InjectRequest(BaseModel):
     text: str
     user: Optional[str] = None
+
+
+class AskRequest(BaseModel):
+    question: str
 
 
 class LearnRequest(BaseModel):
@@ -170,6 +177,47 @@ def verify_batch(req: VerifyBatchRequest):
         if err:
             return err
     return {"results": [_verify(it.text, it.context_type) for it in req.items]}
+
+
+def _ask_brain(question: str) -> dict:
+    """Shared ask-the-brain logic for POST /ask and Slack questions.
+    Deterministic first; if OPENAI_API_KEY is set the answer is rephrased
+    in friendlier words (sources untouched), failing open."""
+    t0 = time.time()
+    out = explain_policy(question, COMPANY_BRAIN)
+    engine = "rules"
+    if out.get("matched"):
+        polished = llm_polish_answer(question, out["answer"])
+        if polished:
+            out = {**out, "answer": polished}
+            engine = "rules+llm"
+    return {**out,
+            "meta": {"engine": engine,
+                     "latency_ms": round((time.time() - t0) * 1000, 1)}}
+
+
+@app.post("/ask",
+          summary="Ask the company brain a question (the onboarding test)",
+          description="A new hire asks 'what are the rules?' in plain English "
+                      "and gets a sourced answer: every reply cites the "
+                      "brain keys it came from. matched=false means the brain "
+                      "doesn't cover it yet — a human can teach it via /learn.")
+def ask(req: AskRequest):
+    q = (req.question or "").strip()
+    if not (3 <= len(q) <= 300):
+        return JSONResponse(
+            status_code=422,
+            content={"error": "question must be 3-300 characters"})
+    return _ask_brain(q)
+
+
+@app.get("/brain/policies",
+         summary="Policy cards generated from the brain",
+         description="One card per policy family — title, rule text, the "
+                     "brain_key it cites, and an example violation. Powers "
+                     "the dashboard's brain panel.")
+def brain_policies():
+    return policy_cards(COMPANY_BRAIN)
 
 
 @app.post("/execute-action",

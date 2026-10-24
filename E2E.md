@@ -74,6 +74,11 @@ Text for each is in `backend/scenarios.json` (also shown by `GET /scenarios`).
 | `support_reply` text | ⚠️ thread: "caught 2 issues" — 2× `PROMISE_BREACH` | same |
 | `clean_email` text | ✅ reaction only — **no thread reply**, channel stays clean | same |
 | *(bonus)* `slack_urgent_fraud` text | 🛑 thread: "caught 2 issues" — `PAYMENT_REDIRECTION` + `URGENT_PAYMENT_CHANGE` | same |
+| `? can I give a 20% discount?` | 💡 thread: the answer + `Source: <brain_key> = <value>` per citation | feed item `kind: "question"` + `FEED_ASK` audit row |
+
+Questions — `?…`, `ask:…`, or any `@CommitGuard` mention — are answered from
+the brain, never run through the rules engine, and count under `questions`
+in `/feed/stats`. Same path as `POST /ask`.
 
 Each thread reply is one Block Kit message: a header, then per violation a
 section with the issue, a context line citing the brain

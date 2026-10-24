@@ -21,7 +21,7 @@ Open http://127.0.0.1:8000 → 4 scenario buttons work = ready.
 
 ## Every phase
 
-1. Paste your Phase-N prompt from `team/<you>/PROMPTS.md` → run its VERIFY step
+1. Copy your Phase-N prompt from `team/<you>/PROMPTS.md` — the ENTIRE fenced block, it has all context the AI needs — paste it → run its VERIFY step
 2. `git checkout -b <you>/phase<N> && git add -A && git commit -m "phase <N>" && git push -u origin <you>/phase<N> && gh pr create --fill`
 3. Post "phase N up" → wait for all merges → next phase
 

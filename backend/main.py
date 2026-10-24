@@ -81,30 +81,37 @@ SCENARIOS = json.loads(SCENARIOS_PATH.read_text()) if SCENARIOS_PATH.exists() el
 
 def _verify(text: str, context_type: str) -> dict:
     t0 = time.time()
+    tr = time.time()
     violations = rules.run_rules(text, COMPANY_BRAIN, context_type)
+    rules_ms = round((time.time() - tr) * 1000, 2)
     engine = "rules"
+    advisories = []
+    full_rewrite = None
 
     llm = llm_enrich(text, context_type, violations, COMPANY_BRAIN)
-    full_rewrite = None
     if llm:
         engine = "rules+llm"
+        advisories = llm.get("violations", [])
         full_rewrite = llm.get("full_rewrite")
-        for v in llm.get("violations", []):
-            if v.get("suggested_rewrite"):
-                for dv in violations:
-                    if not dv.get("suggested_rewrite") and dv["category"] == v.get("category"):
-                        dv["suggested_rewrite"] = v["suggested_rewrite"]
 
     status = "VIOLATION_DETECTED" if violations else "CLEAN"
+    if status == "CLEAN":
+        suggested_rewrite = None
+    elif isinstance(full_rewrite, str) and full_rewrite.strip():
+        suggested_rewrite = full_rewrite
+    else:
+        suggested_rewrite = rules.apply_fixes(text, violations)
     return {
         "status": status,
         "risk_level": rules.risk_level(violations),
         "violations": violations,
-        "suggested_rewrite": full_rewrite or (rules.apply_fixes(text, violations) if violations else None),
+        "advisories": advisories,
+        "suggested_rewrite": suggested_rewrite,
         "meta": {
             "engine": engine,
             "checks_run": len(rules.ALL_CHECKS),
             "latency_ms": round((time.time() - t0) * 1000, 1),
+            "rules_ms": rules_ms,
         },
     }
 

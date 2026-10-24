@@ -21,8 +21,8 @@
 
 ```
 In backend/main.py only. Additive — never change existing response shapes:
-- CORS allow-all (local demo only).
-- Validate POST /verify-context: non-empty text; context_type in {outgoing_email, outgoing_slack, incoming_invoice, general} → else 422 {"error": "..."}.
+- CORS is already enabled — verify it's there, don't duplicate it.
+- Validate POST /verify-context: non-empty text; context_type in {outgoing_email, slack_message, incoming_invoice, general} (match CONTRACT.md exactly) → else 422 {"error": "..."}.
 - New POST /verify-batch: {items: [{text, context_type}]} → {"results": [...]} reusing existing logic.
 VERIFY: cd backend && uv run python smoke_test.py → all pass. curl 127.0.0.1:8000/health + one POST /verify-batch.
 ```

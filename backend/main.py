@@ -1,11 +1,11 @@
 import json
 import time
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
 import rules
@@ -35,22 +35,37 @@ class VerifyRequest(BaseModel):
     recipient: Optional[str] = None
 
 
+class VerifyBatchRequest(BaseModel):
+    items: List[VerifyRequest] = []
+
+
 class ActionRequest(BaseModel):
     action_type: str
     payload: dict = {}
+
+
+VALID_CONTEXT_TYPES = {"outgoing_email", "slack_message", "incoming_invoice", "general"}
+
+
+def _validate(text: str, context_type: str):
+    if not text or not text.strip():
+        return JSONResponse(status_code=422, content={"error": "text must be non-empty"})
+    if context_type not in VALID_CONTEXT_TYPES:
+        return JSONResponse(status_code=422, content={
+            "error": f"context_type must be one of {sorted(VALID_CONTEXT_TYPES)}"})
+    return None
 
 
 SCENARIOS_PATH = BASE / "scenarios.json"
 SCENARIOS = json.loads(SCENARIOS_PATH.read_text()) if SCENARIOS_PATH.exists() else {}
 
 
-@app.post("/verify-context")
-def verify_context(req: VerifyRequest):
+def _verify(text: str, context_type: str) -> dict:
     t0 = time.time()
-    violations = rules.run_rules(req.text, COMPANY_BRAIN, req.context_type)
+    violations = rules.run_rules(text, COMPANY_BRAIN, context_type)
     engine = "rules"
 
-    llm = llm_enrich(req.text, req.context_type, violations, COMPANY_BRAIN)
+    llm = llm_enrich(text, context_type, violations, COMPANY_BRAIN)
     full_rewrite = None
     if llm:
         engine = "rules+llm"
@@ -66,13 +81,32 @@ def verify_context(req: VerifyRequest):
         "status": status,
         "risk_level": rules.risk_level(violations),
         "violations": violations,
-        "suggested_rewrite": full_rewrite or (rules.apply_fixes(req.text, violations) if violations else None),
+        "suggested_rewrite": full_rewrite or (rules.apply_fixes(text, violations) if violations else None),
         "meta": {
             "engine": engine,
             "checks_run": len(rules.ALL_CHECKS),
             "latency_ms": round((time.time() - t0) * 1000, 1),
         },
     }
+
+
+@app.post("/verify-context")
+def verify_context(req: VerifyRequest):
+    err = _validate(req.text, req.context_type)
+    if err:
+        return err
+    return _verify(req.text, req.context_type)
+
+
+@app.post("/verify-batch")
+def verify_batch(req: VerifyBatchRequest):
+    if not req.items:
+        return JSONResponse(status_code=422, content={"error": "items must be a non-empty list"})
+    for it in req.items:
+        err = _validate(it.text, it.context_type)
+        if err:
+            return err
+    return {"results": [_verify(it.text, it.context_type) for it in req.items]}
 
 
 @app.post("/execute-action")

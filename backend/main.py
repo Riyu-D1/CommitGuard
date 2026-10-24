@@ -21,6 +21,7 @@ import brain_store
 import audit_trace
 import lightfern_bridge
 import chaser
+import treasury
 from llm_enrich import llm_enrich, llm_enabled, llm_polish_answer
 
 from rules import explain_policy, policy_cards
@@ -43,6 +44,7 @@ async def lifespan(_app):
                      proposal_fn=_proposal_decision,
                      chase_fn=_chase_draft, chase_command_fn=_chase_cmd)
     slack_feed.add_feed_listener(_chase_signal)
+    slack_feed.add_feed_listener(_treasury_signal)
     yield
     lightfern_bridge.stop()
 
@@ -281,6 +283,11 @@ _OWES_RE = re.compile(
     r"overdue\s+receiv|receivables?|outstanding\s+(invoices?|money)|"
     r"who\s+hasn'?t\s+paid|haven'?t\s+paid)\b")
 
+_TREASURY_RE = re.compile(
+    r"(?i)\b(ready\s+to\s+pay|payment\s+queue|treasury\s+queue|"
+    r"round\s+treasury|what'?s\s+payable|payments?\s+(queued|pending|"
+    r"waiting|held))\b")
+
 
 def _ask_brain(question: str) -> dict:
     """Shared ask-the-brain logic for POST /ask and Slack questions.
@@ -288,10 +295,13 @@ def _ask_brain(question: str) -> dict:
     in friendlier words (sources untouched), failing open.
 
     Receivables questions ('who owes us money', 'what's overdue') are
-    answered by the chaser's ageing summary — same response shape."""
+    answered by the chaser's ageing summary — same response shape.
+    'What's ready to pay' is answered by the Round Treasury queue."""
     t0 = time.time()
     if _OWES_RE.search(question or ""):
         out = chaser.ask_summary(COMPANY_BRAIN)
+    elif _TREASURY_RE.search(question or ""):
+        out = treasury.ask_summary(COMPANY_BRAIN)
     else:
         out = explain_policy(question, COMPANY_BRAIN)
     engine = "rules"
@@ -754,6 +764,55 @@ def _chase_signal(item: dict) -> None:
             lightfern_bridge.export_brain(brain=COMPANY_BRAIN)
     except Exception:
         pass
+
+
+def _treasury_signal(item: dict) -> None:
+    """Feed listener — checked incoming invoices land in the Round Treasury
+    queue (ready to stage vs held). Fail-open like every listener."""
+    try:
+        treasury.ingest_feed_item(item, COMPANY_BRAIN)
+    except Exception:
+        pass
+
+
+class TreasuryActionRequest(BaseModel):
+    name: Optional[str] = None
+
+
+@app.get("/treasury/queue",
+         summary="Round Treasury payment queue — ready vs held invoices",
+         description="Every checked incoming invoice, sorted by the action "
+                     "plan: no hold-type action -> ready to stage with "
+                     "amount/payee/due date/tier approver; HOLD_PAYMENT, "
+                     "VERIFY_VENDOR or ESCALATE -> held with the reason and "
+                     "cited brain_key. Sample data — no money ever moves.")
+def treasury_queue():
+    return treasury.list_queue()
+
+
+@app.post("/treasury/{qid}/approve",
+          summary="Mark a queued invoice approved (still no payment)",
+          description="Records approved_by + approved_at on a ready item. "
+                      "Held items must be released first. Nothing is paid — "
+                      "the label always says sample data, no money moves.")
+def treasury_approve(qid: str, req: TreasuryActionRequest):
+    entry, err = treasury.approve(qid, req.name or "api")
+    if err:
+        code = 404 if "not found" in err else 409
+        return JSONResponse(status_code=code, content={"error": err})
+    return entry
+
+
+@app.post("/treasury/{qid}/release-hold",
+          summary="Release a held invoice back to ready",
+          description="Clears the hold — the original violation reason stays "
+                      "on the record for audit.")
+def treasury_release(qid: str, req: TreasuryActionRequest):
+    entry, err = treasury.release_hold(qid, req.name or "api")
+    if err:
+        code = 404 if "not found" in err else 409
+        return JSONResponse(status_code=code, content={"error": err})
+    return entry
 
 
 def _reload_brain_after_chase() -> None:

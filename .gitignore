@@ -4,6 +4,7 @@ __pycache__/
 server.log
 audit_log.jsonl
 round_staging_queue.json
+treasury_queue.json
 feed_log.jsonl
 brain_proposals.json
 brain_changelog.jsonl

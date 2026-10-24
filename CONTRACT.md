@@ -104,11 +104,25 @@ the very next /verify-context call enforces the rule.
 
 A background thread checks every new message in a Slack channel when
 `SLACK_BOT_TOKEN` + `SLACK_CHANNEL_ID` are set (polls conversations.history
-every 3s; `SLACK_REPLY=1` also posts one threaded warning per flagged message,
-default OFF). With either unset it runs **simulated mode** — cycling
-backend/scenarios.json every 8s — so the demo works offline. Every item also
-appends to `backend/feed_log.jsonl` (gitignored) and writes a `FEED_CHECK`
+every 3s; `SLACK_REPLY=1` also posts one threaded Block Kit warning per
+flagged message and a ✅ reaction per clean one, default OFF). With either
+unset it runs **simulated mode** — cycling backend/scenarios.json every 8s —
+so the demo works offline. Every item also appends to
+`backend/feed_log.jsonl` (gitignored) and writes a `FEED_CHECK`
 row to the audit trail. The token is never returned or logged.
+
+Env vars may be set in the real environment or in `backend/.env`
+(gitignored; stdlib parser, real env wins — see `backend/.env.example`).
+Slack writes honor the API's 429 `Retry-After` header; bot/subtype/own
+messages are ignored so the monitor can't loop on itself.
+
+### GET /slack/status
+```json
+{ "mode": "slack | simulated", "channel": "C… | null",
+  "token": "set | missing", "reply_enabled": true,
+  "last_poll_ts": "ISO-8601 | null", "last_error": "string | null" }
+```
+`token` is only ever the string `"set"` or `"missing"` — never the value.
 
 ### GET /feed?since=<id>&limit=50
 Newest-first array of feed items; `since` returns only items with `id > since`.

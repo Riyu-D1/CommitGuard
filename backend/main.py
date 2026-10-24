@@ -24,7 +24,7 @@ BRAIN_PATH = BASE / "company_brain.json"
 @asynccontextmanager
 async def lifespan(_app):
     slack_feed.start(verify_fn=_verify, scenarios=SCENARIOS,
-                     ask_fn=_ask_brain)
+                     ask_fn=_ask_brain, override_fn=_slack_override)
     yield
 
 
@@ -96,6 +96,7 @@ class OverrideRequest(BaseModel):
     decision: str
     phrase: Optional[str] = None
     note: Optional[str] = None
+    category: Optional[str] = None
 
 
 VALID_CONTEXT_TYPES = {"outgoing_email", "slack_message", "incoming_invoice", "general"}
@@ -136,7 +137,7 @@ def _verify(text: str, context_type: str) -> dict:
         suggested_rewrite = full_rewrite
     else:
         suggested_rewrite = rules.apply_fixes(text, violations)
-    return {
+    result = {
         "status": status,
         "risk_level": rules.risk_level(violations),
         "violations": violations,
@@ -149,6 +150,8 @@ def _verify(text: str, context_type: str) -> dict:
             "rules_ms": rules_ms,
         },
     }
+    result["actions"] = actions.plan_actions(result, COMPANY_BRAIN)
+    return result
 
 
 @app.post("/verify-context",
@@ -305,10 +308,22 @@ def learn(req: LearnRequest):
 
 
 @app.get("/brain/learned",
-         summary="List learned rules, newest first",
-         description="Returns brain.learned_rules — every rule taught via "
-                     "/learn or /feed/{id}/override — newest first.")
+         summary="List learned rules and exceptions, newest first",
+         description="Returns {rules, exceptions} — brain.learned_rules "
+                     "(taught via /learn or override 'missed') and "
+                     "brain.learned_exceptions (override 'false_positive'), "
+                     "each newest first.")
 def brain_learned():
+    return {"rules": list(reversed(COMPANY_BRAIN.get("learned_rules", []))),
+            "exceptions": list(reversed(
+                COMPANY_BRAIN.get("learned_exceptions", [])))}
+
+
+@app.get("/brain/learned/rules",
+         summary="List learned rules only (legacy shape)",
+         description="The pre-/brain/learned shape: a plain array of "
+                     "brain.learned_rules, newest first.")
+def brain_learned_rules():
     return list(reversed(COMPANY_BRAIN.get("learned_rules", [])))
 
 
@@ -368,38 +383,102 @@ def feed_inject(req: InjectRequest):
     return item
 
 
+def _apply_override(feed_id, decision, phrase=None, note=None, category=None):
+    """Shared override logic for POST /feed/{id}/override and Slack thread
+    commands. Returns (payload, error_response)."""
+    global COMPANY_BRAIN
+    item = slack_feed.get_item(feed_id)
+    if item is None:
+        return None, JSONResponse(
+            status_code=404,
+            content={"error": f"feed item {feed_id} not found"})
+    violations = item.get("violations") or []
+    rule = exception = recheck = used_phrase = None
+    if decision == "missed":
+        if not phrase or not phrase.strip():
+            return None, JSONResponse(status_code=422, content={
+                "error": "phrase is required when decision is 'missed'"})
+        rule, err = _learn(phrase, "LEARNED_RULE", "HIGH", None, None, feed_id)
+        if err:
+            return None, err
+        used_phrase = phrase
+    elif decision == "false_positive":
+        cat = (category or "").strip().upper() or \
+              (violations[0].get("category") if violations else None)
+        if not cat:
+            return None, JSONResponse(status_code=422, content={
+                "error": "category is required — item has no violations "
+                         "to infer one from"})
+        ph = (phrase or "").strip()
+        if not ph:
+            hit = next((v for v in violations
+                        if v.get("category") == cat
+                        and (v.get("span") or {}).get("text")), None) or \
+                  next((v for v in violations
+                        if (v.get("span") or {}).get("text")), None)
+            ph = ((hit or {}).get("span") or {}).get("text") or ""
+        if not ph:
+            return None, JSONResponse(status_code=422, content={
+                "error": "phrase is required — item violations have no "
+                         "span text to default to"})
+        try:
+            exception = rules.add_learned_exception({
+                "phrase": ph, "category": cat, "note": note,
+                "source_feed_id": feed_id})
+        except ValueError as e:
+            return None, JSONResponse(status_code=422,
+                                      content={"error": str(e)})
+        used_phrase = ph
+        new_brain = load_brain()
+        if new_brain:
+            COMPANY_BRAIN = new_brain
+    if decision in ("missed", "false_positive"):
+        recheck = _verify(item["text"], item.get("context_type", "slack_message"))
+        slack_feed.update_item(feed_id, recheck)
+    override = slack_feed.record_override(
+        feed_id, decision, phrase=used_phrase or phrase, note=note,
+        rule_id=(rule or exception or {}).get("id"))
+    return {"override": override, "rule": rule,
+            "exception": exception, "recheck": recheck}, None
+
+
+def _slack_override(feed_id, decision, phrase=None):
+    """slack_feed's thread-command hook ('missed: <phrase>' / 'fine') — same
+    logic as the HTTP override without the HTTP layer. Returns
+    (payload, error_message)."""
+    payload, err = _apply_override(feed_id, decision, phrase=phrase)
+    if err is not None:
+        try:
+            msg = json.loads(err.body).get("error", "override failed")
+        except Exception:
+            msg = "override failed"
+        return None, msg
+    return payload, None
+
+
 @app.post("/feed/{feed_id}/override",
-          summary="Human verdict on a feed item: 'missed' teaches a rule",
+          summary="Human verdict: 'missed' teaches a rule, 'false_positive' "
+                  "an exception",
           description="decision='missed' requires phrase: it learns a rule "
                       "(same as POST /learn with source_feed_id=id), re-runs the "
                       "item's text, and flips the stored item to its new verdict — "
                       "the UI can show it go CLEAN -> caught. "
-                      "decision='false_positive' just records the verdict. Either "
-                      "way an override record is appended to feed_log.jsonl and "
-                      "returned as 'override'.")
+                      "decision='false_positive' learns an exception via "
+                      "rules.add_learned_exception: category defaults to the "
+                      "item's first violation category, phrase to that "
+                      "violation's span text; the recheck drops the suppressed "
+                      "category. Either way an override record is appended to "
+                      "feed_log.jsonl and returned as 'override'.")
 def feed_override(feed_id: int, req: OverrideRequest):
-    item = slack_feed.get_item(feed_id)
-    if item is None:
-        return JSONResponse(status_code=404,
-                            content={"error": f"feed item {feed_id} not found"})
     decision = (req.decision or "").strip().lower()
     if decision not in {"missed", "false_positive"}:
         return JSONResponse(status_code=422, content={
             "error": "decision must be 'missed' or 'false_positive'"})
-    rule = recheck = None
-    if decision == "missed":
-        if not req.phrase or not req.phrase.strip():
-            return JSONResponse(status_code=422, content={
-                "error": "phrase is required when decision is 'missed'"})
-        rule, err = _learn(req.phrase, "LEARNED_RULE", "HIGH", None, None, feed_id)
-        if err:
-            return err
-        recheck = _verify(item["text"], item.get("context_type", "slack_message"))
-        slack_feed.update_item(feed_id, recheck)
-    override = slack_feed.record_override(
-        feed_id, decision, phrase=req.phrase, note=req.note,
-        rule_id=(rule or {}).get("id"))
-    return {"override": override, "rule": rule, "recheck": recheck}
+    payload, err = _apply_override(feed_id, decision, phrase=req.phrase,
+                                   note=req.note, category=req.category)
+    if err:
+        return err
+    return payload
 
 
 @app.get("/slack/status",

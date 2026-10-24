@@ -39,6 +39,12 @@ IPv6 `::1` where uvicorn doesn't listen; this bit us in testing.
     }
   ],
   "suggested_rewrite": "full-text rewrite | null",
+  "actions": [
+    { "type": "HOLD_PAYMENT | ESCALATE | REQUEST_APPROVAL | BLOCK_AND_REDACT | SUGGEST_REWRITE",
+      "label": "human-readable next step (targets come from the brain, e.g. 'Escalate to Amara Osei')",
+      "target": "person/channel from the brain | null",
+      "payload": { "...": "context for executing the action" } }
+  ],
   "meta": { "engine": "rules | rules+llm", "checks_run": 8, "latency_ms": 3.2 }
 }
 ```
@@ -47,6 +53,8 @@ Client rules:
 - `severity: CRITICAL` → block Send, offer Escalate only.
 - `span` is optional per violation; when present, clients SHOULD underline it inline.
 - `suggested_rewrite` (top level) is the one-click "Apply all fixes" text.
+- `actions` is the engine's suggested next steps (from `actions.plan_actions`)
+  — [] for clean items; deduped by type; pure suggestion, nothing executed.
 
 ## POST /execute-action
 
@@ -126,7 +134,15 @@ on lower-cased phrase: re-learning the same phrase returns the existing rule.
 `422 {error}` on bad input. The in-memory brain reloads before the response, so
 the very next /verify-context call enforces the rule.
 
-### GET /brain/learned → learned rules array, newest first
+### GET /brain/learned → `{ "rules": [...], "exceptions": [...] }`, each newest first
+
+`rules` is `brain.learned_rules` (taught via /learn or override `missed`);
+`exceptions` is `brain.learned_exceptions` (override `false_positive`).
+
+### GET /brain/learned/rules → plain learned-rules array, newest first
+
+The pre-`{rules, exceptions}` shape — for clients built against the old
+`/brain/learned` list response.
 
 ## GET /audit-log?limit=N → newest-first array of audit entries
 ## GET /scenarios → { key: { label, context_type, text } } from backend/scenarios.json
@@ -138,7 +154,10 @@ the very next /verify-context call enforces the rule.
 A background thread checks every new message in a Slack channel when
 `SLACK_BOT_TOKEN` + `SLACK_CHANNEL_ID` are set (polls conversations.history
 every 3s; `SLACK_REPLY=1` also posts one threaded Block Kit warning per
-flagged message and a ✅ reaction per clean one, default OFF). With either
+flagged message — ending in a `🤖 Actions: <label> · <label>` context line
+from the actions plan — a softer `💡 Worth a check` thread reply per
+rule-clean message that still has LLM advisories, and a ✅ reaction only
+when a message is truly clean (no advisories); default OFF). With either
 unset it runs **simulated mode** — cycling backend/scenarios.json every 8s —
 so the demo works offline. Every item also appends to
 `backend/feed_log.jsonl` (gitignored) and writes a `FEED_CHECK`
@@ -179,6 +198,7 @@ Check items (`kind: "check"` — the default):
   "status": "CLEAN | VIOLATION_DETECTED", "risk_level": "LOW|MEDIUM|HIGH",
   "violations": [ ...same shape as /verify-context... ],
   "suggested_rewrite": "string | null", "advisories": [ ... ],
+  "actions": [ ...same shape as /verify-context... ],
   "meta": { "engine": "...", "checks_run": 8, "latency_ms": 1.2, "rules_ms": 0.9 }
 }
 ```
@@ -197,7 +217,7 @@ verdict:
   "sources": [{ "brain_key": "financial_rules.max_unapproved_discount_percent",
                 "value": 10 }],
   "matched": true,
-  "suggested_rewrite": null, "advisories": [],
+  "suggested_rewrite": null, "advisories": [], "actions": [],
   "meta": { "engine": "rules | rules+llm", "latency_ms": 0.8 }
 }
 ```
@@ -217,12 +237,15 @@ feed item. A `?`/`ask:` text is answered, not checked (`kind: "question"`).
 422 on empty text.
 
 ### POST /feed/{id}/override
-Human verdict on a feed item — the "you missed this" teaching path.
+Human verdict on a feed item — the "you missed this" / "that's fine" teaching paths.
 
 **Request**
 ```json
 { "decision": "missed | false_positive",
-  "phrase": "required when decision=missed — becomes the learned rule",
+  "phrase": "required when decision=missed — becomes the learned rule;
+             optional for false_positive (defaults to the matched span text)",
+  "category": "optional — the violation category to suppress;
+               defaults to the item's first violation category",
   "note": "optional free text" }
 ```
 
@@ -230,15 +253,31 @@ Human verdict on a feed item — the "you missed this" teaching path.
 ```json
 { "override": { "type": "override", "ts": "...", "feed_id": 3,
                 "decision": "missed", "phrase": "...", "note": "...",
-                "rule_id": "lr_1 | null" },
+                "rule_id": "lr_1 | le_1 | null" },
   "rule": "stored learned rule | null",
+  "exception": "stored learned exception | null",
   "recheck": "fresh verify result for the item's text | null" }
 ```
 
 - `missed` → runs the /learn logic with `source_feed_id=id`, re-verifies the
   item's text, and updates the stored feed item so it flips to its new verdict
   (typically CLEAN → VIOLATION_DETECTED).
-- `false_positive` → records the verdict only; `rule` and `recheck` are null.
+- `false_positive` → stores a `learned_exceptions` entry (`{id, phrase,
+  category, note?, source_feed_id, created_ts}`) via
+  `rules.add_learned_exception`, reloads the brain, and re-verifies the item —
+  `recheck` drops the suppressed category whenever the phrase appears in the
+  text. Exceptions are enforced by the deterministic engine like everything
+  else. 422 when the category can't be inferred (item has no violations) or
+  no phrase can be derived (no span text).
 - Every call appends an `override` record to `backend/feed_log.jsonl` and a
   `FEED_OVERRIDE` row to the audit trail.
 - 404 unknown feed id · 422 bad decision or missing phrase.
+
+### Slack thread commands (SLACK_REPLY=1)
+
+Replying inside a CommitGuard thread runs the same override logic:
+`missed: <phrase>` → `decision="missed"` (teaches a rule); `fine` →
+`decision="false_positive"` (learns an exception for that item). The bot
+answers `📚 Learned: …` in the thread. Threads the bot has posted in are
+polled via `conversations.replies` for 30 min after posting, at most once
+every 5s; 429 `Retry-After` is honored.

@@ -134,6 +134,11 @@ expect("rule_urgently",
        "Please pay invoice 4411 to our new IBAN GB00 1234 urgently",
        "incoming_invoice", must_have={"URGENT_PAYMENT_CHANGE"})
 
+# darsh/finance-brain regression: 'pay ... invoice £12k' must tier-flag.
+expect("rule_pay_invoice_spend",
+       "I will pay the AWS invoice £12k today",
+       "slack_message", must_have={"SPEND_OVER_LIMIT"})
+
 # darsh/learn: runtime learned rules — temp brain copy, add "rebate", verify
 # it fires, verify re-adding dedupes, verify the real brain is untouched.
 import json  # noqa: E402

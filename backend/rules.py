@@ -535,7 +535,11 @@ def spend_tier(amount: float, brain: dict):
 
 _SPEND_INTENT_RE = re.compile(
     r"(?i)\b(approv\w*|sign\w*[ -]?off|budget\w*|spend\w*|wir(?:e|ed|ing)|"
-    r"transfer\w*|pay(?:ing|s)?\s+out|purchase order)\b")
+    r"transfer\w*|pay|paying|pays|invoic\w*|bill\w*|remit\w*|settle\w*|"
+    r"purchase order|pay(?:ing|s)?\s+out)\b")
+_RECURRING_SUFFIX_RE = re.compile(
+    r"(?i)^\s*(?:(?:/|per)\s*(?:yr|year|mo|month|annum|seat|user|licen[cs]e)|"
+    r"arr|mrr|apr)\b")
 _TIER_SEVERITY = {"team_lead": "MEDIUM", "cfo": "HIGH", "exec": "CRITICAL"}
 
 
@@ -543,8 +547,10 @@ def check_spend_tiers(text: str, brain: dict) -> list:
     """Spend requests must name the right approver for their tier."""
     if not _SPEND_INTENT_RE.search(text):
         return []
-    best = None  # (amount, match, tier) for the largest amount found
+    best = None  # (amount, match, tier) for the largest non-recurring amount
     for m, amt in gbp_amounts(text):
+        if _RECURRING_SUFFIX_RE.match(text[m.end():]):
+            continue  # £48k/yr, £31k ARR, £110/seat — run-rates, not spend
         tier = spend_tier(amt, brain)
         if tier and "self" not in tier["approver_roles"] and \
                 (best is None or amt > best[0]):
@@ -614,7 +620,8 @@ def check_unapproved_payment(text: str, brain: dict) -> list:
 _BANK_CHANGE_RE = re.compile(
     r"(?i)\b(new|updated|changed|different)\s+(bank|payment|account)\s+"
     r"(details|account|info|number)\b|\b(new|updated)\s+iban\b|"
-    r"\bchanged\s+(their|our|its|the)\s+bank\b")
+    r"\bchanged\s+(their|our|its|the)\s+bank\b|\bnew\s+bank\s+account\b|"
+    r"\bbank\s+details?\s+(have|has|been|were)?\s*(changed|updated)\b")
 _VENDOR_CONTEXT_RE = re.compile(
     r"(?i)\b(vendor|supplier|invoice|account|iban|pay\w*|wir\w*|transfer\w*|"
     r"send\w*|remit\w*)\b")
@@ -647,8 +654,9 @@ def check_new_vendor_bank(text: str, brain: dict) -> list:
 _DAY_RE = re.compile(
     r"(?i)\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b")
 _SCHED_WORD_RE = re.compile(
-    r"(?i)\b(on|move[ds]?|push(?:ing|ed)?|batch(?:ing|ed)?|schedul\w+|"
-    r"delay(?:ed|ing)?|until|postpone\w*|deadline)\b")
+    r"(?i)\b(on|move[ds]?|moving|push(?:ing|ed)?|batch(?:ing|ed)?|schedul\w+|"
+    r"delay(?:ed|ing)?|until|postpone\w*|deadline|lands?|set\s+for|shift\w*|"
+    r"go(?:es)?\s+out|falls?\s+on|book\w*)\b")
 _PAYMENT_WORD_RE = re.compile(
     r"(?i)\b(pay\w*|payment\w*|invoice\w*|wir\w*|transfer\w*|batch|"
     r"supplier\w*|vendor\w*|remit\w*)\b")

@@ -9,12 +9,14 @@ import re
 from typing import Any, Optional
 
 SEVERITY_ORDER = {"LOW": 0, "MEDIUM": 1, "HIGH": 2, "CRITICAL": 3}
+SEVERITY_RISK_SCORE = {"LOW": 20, "MEDIUM": 45, "HIGH": 70, "CRITICAL": 95}
 
 
 def _v(category, severity, issue, correction, evidence, span=None, fix=None):
     v = {
         "category": category,
         "severity": severity,
+        "risk_score": SEVERITY_RISK_SCORE.get(severity, 0),
         "issue": issue,
         "correction": correction,
         "evidence": evidence,

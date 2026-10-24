@@ -16,61 +16,7 @@ import actions
 import slack_feed
 from llm_enrich import llm_enrich, llm_enabled, llm_polish_answer
 
-try:
-    from rules import explain_policy, policy_cards
-except ImportError:
-    # FALLBACK: delete when darsh/onboarding merges — tiny keyword search
-    # over brain keys/values returning the same shapes.
-    import re as _re
-
-    _ASK_STOPWORDS = {
-        "what", "whats", "does", "have", "with", "from", "this", "that",
-        "there", "their", "they", "them", "then", "than", "when", "where",
-        "which", "your", "yours", "about", "would", "could", "should",
-        "tell", "know", "much", "many", "want", "give", "some", "into",
-        "will", "shall", "must", "also", "been", "being", "were",
-    }
-
-    def explain_policy(question: str, brain: dict) -> dict:
-        words = [w for w in _re.findall(r"[a-z0-9]+", question.lower())
-                 if len(w) >= 4 and w not in _ASK_STOPWORDS]
-        hits = []
-
-        def _walk(node, path):
-            if isinstance(node, dict):
-                for k, v in node.items():
-                    _walk(v, f"{path}.{k}" if path else k)
-            elif isinstance(node, list):
-                for i, v in enumerate(node):
-                    _walk(v, f"{path}[{i}]")
-            else:
-                hay = f"{path} {node}".lower().replace("_", " ")
-                if any(_re.search(rf"\b{_re.escape(w)}\b", hay) for w in words):
-                    hits.append({"brain_key": path, "value": node})
-
-        _walk(brain, "")
-        if not hits:
-            return {"answer": "Not in the company brain yet. Ask "
-                              "#finance-approvals",
-                    "sources": [], "matched": False}
-        sources = hits[:3]
-        listing = "; ".join(f"{s['brain_key']} = {s['value']}"
-                            for s in sources)
-        return {"answer": f"From the company brain: {listing}.",
-                "sources": sources, "matched": True}
-
-    def policy_cards(brain: dict) -> list:
-        cards = []
-        for key, val in brain.items():
-            if isinstance(val, dict):
-                for k, v in val.items():
-                    cards.append({"title": f"{key}.{k}", "rule": str(v),
-                                  "brain_key": f"{key}.{k}",
-                                  "example_violation": ""})
-            elif isinstance(val, list) and val:
-                cards.append({"title": key, "rule": f"{len(val)} entries",
-                              "brain_key": key, "example_violation": ""})
-        return cards
+from rules import explain_policy, policy_cards
 
 BASE = Path(__file__).parent
 BRAIN_PATH = BASE / "company_brain.json"

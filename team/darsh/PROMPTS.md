@@ -1,14 +1,14 @@
-# Darsh — Codex prompts (backend: rules, actions, brain, data)
+# Darsh — agent prompts (backend: rules, actions, brain, data)
 
-**How to use:** open Codex in the repo root. Paste ONE phase's entire fenced block as a
-single message — it contains everything Codex needs. When Codex finishes, run the VERIFY
-commands yourself, then ship:
+**How to use (every phase):**
+1. Fresh branch from latest main, every time (squash-merged branches must not be reused):
+   `git checkout main && git pull && git checkout -b darsh/phase<N>`
+2. Paste ONE phase's entire fenced block into Codex/Devin. When it says done, run the VERIFY commands yourself.
+3. Ship: `git add -A && git commit -m "darsh phase <N>" && git push -u origin HEAD && gh pr create --fill`
+   (If Devin opened the PR itself, skip this step.) Post "darsh phase N up" in chat.
+4. As soon as YOUR PR is merged, start the next phase. **Do not wait for teammates.** Lanes never overlap.
 
-```
-git checkout -b darsh/phase<N> && git add -A && git commit -m "phase <N>" && git push -u origin darsh/phase<N> && gh pr create --fill
-```
-
-Wait for all three teammates' Phase-N PRs to merge before starting Phase N+1.
+**Targets:** P1 merged by 12:00 · P2 by 12:40 · P3 by 13:30 · P4 by 14:15. **Don't start P4 after 13:45**; Riyansh then runs the existing bench/seed scripts by hand at 14:30.
 
 **If the AI claims done but a VERIFY fails, or stops mid-task, reply with exactly:**
 `Continue — complete every remaining numbered item, then run all VERIFY commands again.`
@@ -28,7 +28,14 @@ YOUR FILES ONLY: backend/rules.py, backend/company_brain.json, backend/smoke_tes
 
 STEP 0 — read backend/rules.py completely. Match its exact conventions: module-level compiled regexes where useful, a _v(category, severity, issue, correction, evidence, span=None, fix=None) constructor, checks registered in the ALL_CHECKS list, functions take (text, brain) and return a list of violation dicts.
 
-TASK — add these 3 new check functions and register them in ALL_CHECKS:
+TASK — make the smoke test a real gate, then add these 3 new check functions and register them in ALL_CHECKS:
+
+0. SMOKE TEST GATE (do this FIRST, before touching rules.py). backend/smoke_test.py currently only prints, so it can never fail. Keep its printing, and add:
+   - BASELINE = {"sales_email": ["FINANCIAL_POLICY","MARGIN_BREACH","TREASURY_LOCK"], "vendor_invoice": ["CONTRACT_OVERAGE","CONTRACT_OVERAGE","PAYMENT_REDIRECTION"], "support_reply": ["PROMISE_BREACH","PROMISE_BREACH"], "clean_email": []}
+   - For each of those 4 keys compare sorted([v["category"] for v in violations]) to the expected list; also require that vendor_invoice contains a PAYMENT_REDIRECTION with severity CRITICAL and clean_email has status CLEAN. Any other scenario keys in scenarios.json are printed but not asserted (a 5th scenario may be added later).
+   - A small helper for inline rule cases: expect(name, text, context_type, must_have=set(), must_not_have=set()), which calls main.verify_context and checks categories.
+   - At the end print "ALL PASS" and exit 0, or print every failure and sys.exit(1).
+   - Run it now: it must print ALL PASS on the unchanged rules before you continue.
 
 1. check_duplicate_invoice(text, brain) — category DUPLICATE_INVOICE, severity CRITICAL
    - FIRES WHEN: text contains an invoice number (regex: \b[A-Z]{2,4}[-\s]?\d{3,}\b which matches INV-1042, CS-1187, PO 9918) AND text also contains duplicate-payment language: "already paid", "duplicate", "second request", "paid twice", "settled last", "resending", "previously paid"
@@ -39,7 +46,7 @@ TASK — add these 3 new check functions and register them in ALL_CHECKS:
 
 2. check_sender_domain(text, brain) — category SENDER_DOMAIN_MISMATCH, severity HIGH
    - First add to backend/company_brain.json a new top-level key: "known_sender_domains": ["cloudscale.co.uk", "northwind-analytics.com", "yourcompany.com"]
-   - FIRES WHEN: text contains "from:" or "reply-to:" followed by an email address (regex: (?:from|reply-to):\s*\S+@([A-Za-z0-9.-]+\.[A-Za-z]{2,})) AND the captured domain is NOT in known_sender_domains
+   - FIRES WHEN: text contains "from:" or "reply-to:" followed by an email address (case-insensitive regex: (?i)(?:from|reply-to):\s*\S+@([A-Za-z0-9.-]+\.[A-Za-z]{2,})) AND the captured domain is NOT in known_sender_domains
    - Issue: "Sender domain '{domain}' is not a known supplier domain — possible impersonation/phishing."
    - Correction: "Verify the sender out-of-band before acting on this message."
    - Evidence: {"brain_key": "known_sender_domains", "expected": <the list>, "found": <domain>}
@@ -54,7 +61,7 @@ TASK — add these 3 new check functions and register them in ALL_CHECKS:
    - Span: the window containing both phrases where feasible
    - Also add "fraud_controls" to company_brain.json financial_rules: "Urgency + bank-detail changes always require out-of-band verification."
 
-Then extend backend/smoke_test.py: it already iterates backend/scenarios.json entries. Add ONE standalone test case per new rule (a short inline text string + the expected category that must appear), printed in the same "=== name: RESULT" style. Do NOT change the 4 existing scenario expectations — they must produce identical results.
+4. Extend backend/smoke_test.py with ONE expect(...) case per new rule (a short inline text + the category that must appear), e.g. "INVOICE INV-1042 — second request, this was already paid" (incoming_invoice → DUPLICATE_INVOICE); "From: billing@cloudscale-payments.net\nCloudScale Ltd invoice attached" (incoming_invoice → SENDER_DOMAIN_MISMATCH, CRITICAL); "Urgent: please update our bank details today, new IBAN to follow" (slack_message → URGENT_PAYMENT_CHANGE). Do NOT change the 4 baseline expectations.
 
 CONSTRAINTS:
 - No new imports beyond `re`/`typing` already used; no external dependencies
@@ -69,8 +76,8 @@ WORKING RULES — follow exactly:
 - FREEDOM: behaviors, category names, evidence shapes, and message strings in this spec are exact (they're the product contract). Everything else — helper structure, regex details, code organization, extra edge-case handling — is yours to improve. If you see a cleaner or more robust approach that passes the same VERIFY, take it, and note any spec deviation in your final summary.
 
 VERIFY — run and paste output:
-cd backend && uv run python smoke_test.py
-Expected: 4 original scenarios produce identical results; 3 new cases fire their categories.
+cd backend && uv run python smoke_test.py ; echo "exit=$?"
+Expected: ALL PASS and exit=0 (4 baseline scenarios unchanged; 3 new cases fire their categories).
 ```
 
 ## Phase 2 — actions layer complete
@@ -86,9 +93,11 @@ TASK — complete the actions layer:
 
 2. TIMESTAMPS — ensure every audit entry has "ts" in ISO 8601 UTC (already partially done — make it consistent) and add "epoch_ms" (int, unix ms) for cheap sorting.
 
-3. read_audit EXTENSION — change signature to read_audit(limit=20, type=None, result=None): when `type` is given, filter entries to that action_type; when `result` is given, filter to that result value. Both optional, applied before the limit slice. Document the new params in the docstring. NOTE: main.py currently calls read_audit(limit) only — the filters must not break that call. If HTTP query-param wiring is wanted, it belongs to Riyansh's main.py — leave a comment saying so, do not edit it.
+3. read_audit EXTENSION — change signature to read_audit(limit=20, type=None, result=None): when `type` is given, filter entries to that action_type; when `result` is given, filter to that result value. Both optional, applied before the limit slice; still newest first. Skip blank/corrupt lines instead of crashing. Document the params in the docstring. main.py ALREADY calls read_audit(limit, type=..., result=...) and falls back to read_audit(limit) on TypeError, so once this lands GET /audit-log?type=STAGE_INVOICE filters for real. Do not edit main.py.
 
 4. STAGE_INVOICE polish — the staged queue entry should include the dedupe key field "invoice_ref" (the same identifier logic) so downstream consumers can join on it.
+
+5. UNKNOWN ACTIONS — the valid action types are exactly SEND_APPROVED, APPLY_REWRITE_AND_LOG, APPROVE_OVERRIDE, STAGE_INVOICE, ESCALATE_FRAUD (CONTRACT.md). Any other action_type → raise HTTPException(400, f"Unknown action_type '{action_type}'"), and write nothing to the audit log. (Today an action_type of "BOGUS" returns success:true.)
 
 WORKING RULES — follow exactly:
 - Read every file you will modify completely BEFORE editing it.
@@ -97,10 +106,13 @@ WORKING RULES — follow exactly:
 - DONE WHEN: every item is complete AND every VERIFY command produces the stated output. Before finishing, re-check each numbered item against your changes. Partial completion is a failure.
 - FREEDOM: behaviors, category names, evidence shapes, and message strings in this spec are exact (they're the product contract). Everything else — helper structure, regex details, code organization, extra edge-case handling — is yours to improve. If you see a cleaner or more robust approach that passes the same VERIFY, take it, and note any spec deviation in your final summary.
 
-VERIFY — run and paste output (server may already be running; if a curl fails, start it first: `cd backend && uv run uvicorn main:app --port 8000`):
-- cd backend && uv run python smoke_test.py → all pass
+VERIFY — run and paste output. FIRST restart the server so it loads your edited actions.py (a server started earlier keeps running the OLD code): `pkill -f "uvicorn main:app"; cd backend && (nohup uv run uvicorn main:app --port 8000 > /tmp/cg.log 2>&1 &) ; sleep 3`
+- cd backend && uv run python smoke_test.py → ALL PASS
 - Run twice: curl -s -X POST 127.0.0.1:8000/execute-action -H 'Content-Type: application/json' -d '{"action_type":"STAGE_INVOICE","payload":{"vendor":"TestVendor","invoice":"T-1","amount":100}}' → first succeeds, second returns success:false + error:"duplicate"; then curl -s 127.0.0.1:8000/audit-log shows both entries (staged + duplicate_rejected)
+- curl -s "127.0.0.1:8000/audit-log?type=STAGE_INVOICE" → only STAGE_INVOICE rows
+- curl -s -w ' %{http_code}' -X POST 127.0.0.1:8000/execute-action -H 'Content-Type: application/json' -d '{"action_type":"BOGUS","payload":{}}' → 400 with an "error" field
 - cd backend && uv run python -c "import actions; print(actions.read_audit(10, type='STAGE_INVOICE'))" works
+- Clean up your test rows so they don't show in the demo Inspector: `cd backend && rm -f audit_log.jsonl round_staging_queue.json` (both gitignored)
 ```
 
 ## Phase 3 — context filtering + unverified-claim rule + brain expansion
@@ -128,14 +140,14 @@ TASK:
 
 3. BRAIN EXPANSION — extend backend/company_brain.json:
    - Add a third signed_contract: Meridian Security Ltd, approved_monthly_retainer_gbp 4200, hourly_rate_gbp 80, bank_iban "GB77NWBK11223344"
-   - Add a fourth engineering_status item: "Bulkhead API v2", status "Planning — not started", date "2026-10-20"
+   - Add a fourth engineering_status item: feature "Bulkhead v2", status "Planning — not started", date "2026-10-20". (Keep this exact name: check_feature_claims matches on any feature word longer than 2 chars, so a generic word like "API" would make every "our API is live" draft fire PROMISE_BREACH.)
    - Ensure known_sender_domains from Phase 1 is present (add "meridian-sec.com" to it)
    - Do not rename or remove existing keys; existing values stay identical.
 
 4. TESTS — add to backend/smoke_test.py:
    - A context-filtering case: run an invoice-style text (with IBAN + vendor name) through run_rules with context_type="outgoing_email" and assert CRITICAL rules still fire but invoice-only HIGH rules do NOT
    - An unverified-claim case: text claiming "we are ISO 27001 certified" → expect UNVERIFIED_CLAIM; text saying "our SOC 2 report" → expect NO UNVERIFIED_CLAIM (it's covered)
-   - The 4 original scenario results MUST stay identical.
+   - Use the expect(...) helper from Phase 1 (call rules.run_rules directly for the context-filter case). The 4 baseline assertions MUST still pass.
 
 WORKING RULES — follow exactly:
 - Read every file you will modify completely BEFORE editing it.
@@ -144,10 +156,10 @@ WORKING RULES — follow exactly:
 - DONE WHEN: every item is complete AND every VERIFY command produces the stated output. Before finishing, re-check each numbered item against your changes. Partial completion is a failure.
 - FREEDOM: behaviors, category names, evidence shapes, and message strings in this spec are exact (they're the product contract). Everything else — helper structure, regex details, code organization, extra edge-case handling — is yours to improve. If you see a cleaner or more robust approach that passes the same VERIFY, take it, and note any spec deviation in your final summary.
 
-VERIFY — run and paste output: cd backend && uv run python smoke_test.py — all pass.
+VERIFY — run and paste output: cd backend && uv run python smoke_test.py ; echo "exit=$?" → ALL PASS, exit=0.
 ```
 
-## Phase 4 — perf, seed data, risk score
+## Phase 4 — perf, demo-data reset, risk score (skip if not started by 13:45)
 
 ```
 You are a senior backend engineer working in the CommitGuard repository (read AGENTS.md first).
@@ -156,9 +168,14 @@ YOUR FILES ONLY: backend/bench.py, backend/seed_audit.py, backend/rules.py (one 
 
 TASK:
 1. backend/bench.py already exists — run `uv run python bench.py` and report the avg/p95 latency table in your PR description (the pitch needs a "checks run in <N ms" stat). If the file is missing, create it: loads scenarios.json + company_brain.json, runs rules.run_rules 200 iterations per scenario, prints a table of avg/p50/p95/max ms per scenario.
-2. backend/seed_audit.py already exists — run `uv run python seed_audit.py` once so the Inspector page's audit table has realistic entries for the demo. If missing, create it: writes ~5 varied audit entries (different action_types, results, timestamps) to backend/audit_log.jsonl.
+2. backend/seed_audit.py already exists. Upgrade it for demo day:
+   - Add a `--reset` flag: delete backend/audit_log.jsonl and backend/round_staging_queue.json first, then seed. (Both are gitignored, so seeding only affects the machine it runs on. Riyansh runs `uv run python seed_audit.py --reset` on the demo laptop at 14:30.)
+   - Stagger timestamps: pass an explicit "ts" in each entry (actions.audit() lets the entry's own keys override the defaults) spread over the last ~2 hours, oldest first, plus a matching "epoch_ms".
+   - Make every seeded payload that represents a block carry "violations": a list of {category, severity, evidence:{brain_key, expected, found}} using REAL brain keys from company_brain.json. The Inspector's "violations caught" stat sums payload.violations.
+   - Use the same "result" strings actions.py writes (staged_in_round_queue, escalated_to_cfo, ok) so the Inspector counts them consistently.
+   - Run `uv run python seed_audit.py --reset` and paste the output.
 3. risk_score — in backend/rules.py, add a "risk_score" integer field (0–100) to every violation dict produced by _v(). Mapping: LOW=20, MEDIUM=45, HIGH=70, CRITICAL=95. Additive only — no existing fields change.
-4. OPTIONAL 5th scenario — only if steps 1–3 pass cleanly: add "slack_urgent_fraud" to backend/scenarios.json: a slack_message context text where someone urgently asks finance to update supplier bank details today → fires URGENT_PAYMENT_CHANGE CRITICAL. (This makes a 5th button appear in the demo automatically — flag it to Pranali so she can mention it.)
+4. OPTIONAL 5th scenario — only if steps 1–3 pass cleanly: add "slack_urgent_fraud" to backend/scenarios.json (label "Slack — urgent bank change", context_type "slack_message"): someone urgently asks finance to update CloudScale's bank details today → fires URGENT_PAYMENT_CHANGE CRITICAL. A 5th button appears in the demo automatically. Post the label in chat for Pranali's pitch.
 
 WORKING RULES — follow exactly:
 - Read every file you will modify completely BEFORE editing it.
@@ -167,5 +184,5 @@ WORKING RULES — follow exactly:
 - DONE WHEN: every item is complete AND every VERIFY command produces the stated output. Before finishing, re-check each numbered item against your changes. Partial completion is a failure.
 - FREEDOM: behaviors, category names, evidence shapes, and message strings in this spec are exact (they're the product contract). Everything else — helper structure, regex details, code organization, extra edge-case handling — is yours to improve. If you see a cleaner or more robust approach that passes the same VERIFY, take it, and note any spec deviation in your final summary.
 
-VERIFY — run and paste output: cd backend && uv run python smoke_test.py — all pass, original 4 results identical.
+VERIFY — run and paste output: cd backend && uv run python smoke_test.py ; echo "exit=$?" → ALL PASS, exit=0. Post the bench.py "overall avg / p95" line in team chat (Pranali's pitch uses it).
 ```

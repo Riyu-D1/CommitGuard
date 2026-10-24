@@ -23,6 +23,7 @@ import actions
 
 BASE = Path(__file__).parent
 FEED_LOG_PATH = BASE / "feed_log.jsonl"
+BRAIN_PATH = BASE / "company_brain.json"
 
 SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN")
 SLACK_CHANNEL_ID = os.environ.get("SLACK_CHANNEL_ID")
@@ -76,6 +77,7 @@ def _push(text, source, user=None, channel=None,
         "channel": channel,
         "user": user,
         "text": text,
+        "context_type": context_type,
         "status": res["status"],
         "risk_level": res["risk_level"],
         "violations": res["violations"],
@@ -227,6 +229,66 @@ def get_feed(since=None, limit=50) -> list:
     return items[::-1][:limit]
 
 
+def get_item(feed_id) -> dict:
+    """One live feed item by id (None if it has rotated out or never existed)."""
+    with _lock:
+        for i in _feed:
+            if i["id"] == feed_id:
+                return i
+    return None
+
+
+def update_item(feed_id, res: dict) -> dict:
+    """Overwrite a feed item's verdict fields from a fresh verify result —
+    used after /feed/{id}/override learns a rule so the item visibly flips
+    from CLEAN to caught."""
+    with _lock:
+        for i in _feed:
+            if i["id"] == feed_id:
+                for k in ("status", "risk_level", "violations",
+                          "suggested_rewrite", "advisories", "meta"):
+                    i[k] = res[k]
+                return i
+    return None
+
+
+def record_override(feed_id, decision, phrase=None, note=None, rule_id=None) -> dict:
+    """Append a human-override record to feed_log.jsonl and the audit trail."""
+    rec = {
+        "type": "override",
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "feed_id": feed_id,
+        "decision": decision,
+        "phrase": phrase,
+        "note": note,
+        "rule_id": rule_id,
+    }
+    with _lock:
+        try:
+            with FEED_LOG_PATH.open("a") as f:
+                f.write(json.dumps(rec) + "\n")
+        except Exception as e:
+            log.warning("feed_log override write failed: %s", e)
+    try:
+        actions.audit({
+            "action_type": "FEED_OVERRIDE",
+            "payload": {"feed_id": feed_id, "decision": decision,
+                        "phrase": phrase, "note": note},
+            "result": "learned" if decision == "missed" else "false_positive",
+        })
+    except Exception as e:
+        log.warning("audit write failed: %s", e)
+    return rec
+
+
+def _learned_rules_count() -> int:
+    try:
+        brain = json.loads(BRAIN_PATH.read_text())
+        return len(brain.get("learned_rules") or [])
+    except Exception:
+        return 0
+
+
 def get_stats() -> dict:
     with _lock:
         items = list(_feed)
@@ -243,7 +305,8 @@ def get_stats() -> dict:
             by_category[v["category"]] = by_category.get(v["category"], 0) + 1
     return {"total": len(items), "flagged": flagged, "critical": critical,
             "clean": clean, "by_category": by_category,
-            "last_ts": items[-1]["ts"] if items else None, "mode": MODE}
+            "last_ts": items[-1]["ts"] if items else None, "mode": MODE,
+            "learned": _learned_rules_count()}
 
 
 def health_info() -> dict:

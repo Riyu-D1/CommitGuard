@@ -29,7 +29,7 @@ IPv6 `::1` where uvicorn doesn't listen; this bit us in testing.
   "risk_level": "LOW | MEDIUM | HIGH",
   "violations": [
     {
-      "category": "FINANCIAL_POLICY | MARGIN_BREACH | TREASURY_LOCK | PAYMENT_REDIRECTION | CONTRACT_OVERAGE | APPROVAL_REQUIRED | PROMISE_BREACH",
+      "category": "FINANCIAL_POLICY | MARGIN_BREACH | TREASURY_LOCK | PAYMENT_REDIRECTION | CONTRACT_OVERAGE | APPROVAL_REQUIRED | PROMISE_BREACH | DUPLICATE_INVOICE | SENDER_DOMAIN_MISMATCH | URGENT_PAYMENT_CHANGE | UNVERIFIED_CLAIM | LEARNED_RULE (or any custom category passed to /learn)",
       "severity": "LOW | MEDIUM | HIGH | CRITICAL",
       "issue": "human-readable problem",
       "correction": "human-readable fix guidance",
@@ -64,6 +64,37 @@ Client rules:
 
 ## GET /brain → the company_brain.json object
 ## POST /brain/reload → re-read company_brain.json from disk (live-brain demo trick; 422 keeps old brain)
+
+## Learning ("you missed this" → new rule)
+
+The brain grows a `learned_rules` list:
+`{ id, phrase, category, severity, issue, correction, created_ts, source_feed_id }`.
+Every learned rule is enforced immediately by the deterministic engine: the
+phrase is matched case-insensitively (word-boundary) in every context_type and
+produces a violation whose `category` is the rule's category (`LEARNED_RULE` by
+default) with `evidence.brain_key = "learned_rules[<id>]"`.
+
+### POST /learn
+
+**Request**
+```json
+{
+  "phrase": "required, 3-120 chars — the text signature to catch",
+  "category": "LEARNED_RULE (default) — may be any existing category",
+  "severity": "HIGH (default) | CRITICAL | MEDIUM",
+  "issue": "optional — defaults to a human-reviewer message",
+  "correction": "optional — defaults to remove/rephrase guidance",
+  "source_feed_id": "optional int — feed item this rule came from"
+}
+```
+
+**Response** — `201` with the stored rule (id + created_ts filled in). Deduped
+on lower-cased phrase: re-learning the same phrase returns the existing rule.
+`422 {error}` on bad input. The in-memory brain reloads before the response, so
+the very next /verify-context call enforces the rule.
+
+### GET /brain/learned → learned rules array, newest first
+
 ## GET /audit-log?limit=N → newest-first array of audit entries
 ## GET /scenarios → { key: { label, context_type, text } } from backend/scenarios.json
 ## GET /health → { ok, engine: "rules"|"rules+llm", checks, brain_keys, feed: { mode: "slack"|"simulated", channel, last_poll_ts, error? } }
@@ -93,9 +124,37 @@ Newest-first array of feed items; `since` returns only items with `id > since`.
 ```
 
 ### GET /feed/stats
-`{ total, flagged, critical, clean, by_category: {CATEGORY: n}, last_ts, mode }`
+`{ total, flagged, critical, clean, by_category: {CATEGORY: n}, last_ts, mode,
+learned }` — `learned` is the number of rules in `brain.learned_rules`.
 
 ### POST /feed/inject
 `{ "text": "...", "user": "optional" }` → runs the same verify pipeline
 (context_type `slack_message`), stores it with `source: "manual"`, returns the
 feed item. 422 on empty text.
+
+### POST /feed/{id}/override
+Human verdict on a feed item — the "you missed this" teaching path.
+
+**Request**
+```json
+{ "decision": "missed | false_positive",
+  "phrase": "required when decision=missed — becomes the learned rule",
+  "note": "optional free text" }
+```
+
+**Response**
+```json
+{ "override": { "type": "override", "ts": "...", "feed_id": 3,
+                "decision": "missed", "phrase": "...", "note": "...",
+                "rule_id": "lr_1 | null" },
+  "rule": "stored learned rule | null",
+  "recheck": "fresh verify result for the item's text | null" }
+```
+
+- `missed` → runs the /learn logic with `source_feed_id=id`, re-verifies the
+  item's text, and updates the stored feed item so it flips to its new verdict
+  (typically CLEAN → VIOLATION_DETECTED).
+- `false_positive` → records the verdict only; `rule` and `recheck` are null.
+- Every call appends an `override` record to `backend/feed_log.jsonl` and a
+  `FEED_OVERRIDE` row to the audit trail.
+- 404 unknown feed id · 422 bad decision or missing phrase.

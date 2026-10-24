@@ -1,6 +1,9 @@
 import json
+import re
+import threading
 import time
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 
@@ -18,6 +21,74 @@ from llm_enrich import llm_enrich, llm_enabled
 
 BASE = Path(__file__).parent
 BRAIN_PATH = BASE / "company_brain.json"
+
+# Darsh is adding rules.add_learned_rule + rules.check_learned_rules in a
+# parallel PR. Until it merges, these local fallbacks provide the identical
+# contract: atomic append to company_brain.json (deduped on lower-cased
+# phrase) and case-insensitive LEARNED_RULE matching. Delete both once his
+# code is on main.
+try:
+    from rules import add_learned_rule  # noqa: F401
+except ImportError:
+    _brain_write_lock = threading.Lock()
+
+    def add_learned_rule(rule: dict) -> dict:
+        with _brain_write_lock:
+            brain = json.loads(BRAIN_PATH.read_text())
+            learned = brain.setdefault("learned_rules", [])
+            for r in learned:
+                if r.get("phrase", "").lower() == rule["phrase"].lower():
+                    return r
+            n = max([int(m.group(1)) for r in learned
+                     if (m := re.fullmatch(r"lr_(\d+)", str(r.get("id", ""))))]
+                    or [0]) + 1
+            stored = {
+                "id": f"lr_{n}",
+                "phrase": rule["phrase"],
+                "category": rule.get("category", "LEARNED_RULE"),
+                "severity": rule.get("severity", "HIGH"),
+                "issue": rule.get("issue"),
+                "correction": rule.get("correction"),
+                "created_ts": datetime.now(timezone.utc).isoformat(),
+                "source_feed_id": rule.get("source_feed_id"),
+            }
+            learned.append(stored)
+            tmp = BRAIN_PATH.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(brain, indent=2))
+            tmp.replace(BRAIN_PATH)
+            return stored
+
+
+if not hasattr(rules, "check_learned_rules"):
+    def _check_learned_rules_fallback(text: str, brain: dict) -> list:
+        out = []
+        for r in brain.get("learned_rules", []):
+            phrase = r.get("phrase") or ""
+            if not phrase:
+                continue
+            m = re.search(rf"(?i)\b{re.escape(phrase)}\b", text)
+            if not m:
+                continue
+            sev = r.get("severity", "HIGH")
+            correction = r.get("correction") or f"Remove or rephrase '{phrase}'."
+            out.append({
+                "category": r.get("category", "LEARNED_RULE"),
+                "severity": sev,
+                "risk_score": rules.SEVERITY_RISK_SCORE.get(sev, 0),
+                "issue": r.get("issue")
+                         or f"Message matches learned rule for '{phrase}'.",
+                "correction": correction,
+                "suggested_rewrite": None,
+                "evidence": {
+                    "brain_key": f"learned_rules[{r.get('id')}]",
+                    "expected": correction,
+                    "found": m.group(0),
+                },
+                "span": {"text": m.group(0), "start": m.start(), "end": m.end()},
+            })
+        return out
+
+    rules.ALL_CHECKS.append(_check_learned_rules_fallback)
 
 
 @asynccontextmanager
@@ -75,6 +146,21 @@ class ActionRequest(BaseModel):
 class InjectRequest(BaseModel):
     text: str
     user: Optional[str] = None
+
+
+class LearnRequest(BaseModel):
+    phrase: str
+    category: str = "LEARNED_RULE"
+    severity: str = "HIGH"
+    issue: Optional[str] = None
+    correction: Optional[str] = None
+    source_feed_id: Optional[int] = None
+
+
+class OverrideRequest(BaseModel):
+    decision: str
+    phrase: Optional[str] = None
+    note: Optional[str] = None
 
 
 VALID_CONTEXT_TYPES = {"outgoing_email", "slack_message", "incoming_invoice", "general"}
@@ -191,6 +277,65 @@ def reload_brain():
     return {"reloaded": True, "keys": list(COMPANY_BRAIN.keys())}
 
 
+LEARN_SEVERITIES = {"MEDIUM", "HIGH", "CRITICAL"}
+
+
+def _learn(phrase, category, severity, issue, correction, source_feed_id):
+    """Shared /learn logic. Returns (stored_rule, error_response)."""
+    phrase = (phrase or "").strip()
+    if not (3 <= len(phrase) <= 120):
+        return None, JSONResponse(
+            status_code=422,
+            content={"error": "phrase is required and must be 3-120 chars"})
+    sev = (severity or "HIGH").strip().upper()
+    if sev not in LEARN_SEVERITIES:
+        return None, JSONResponse(
+            status_code=422,
+            content={"error": f"severity must be one of {sorted(LEARN_SEVERITIES)}"})
+    cat = (category or "LEARNED_RULE").strip().upper()
+    if not cat:
+        return None, JSONResponse(status_code=422,
+                                  content={"error": "category must be non-empty"})
+    stored = add_learned_rule({
+        "phrase": phrase,
+        "category": cat,
+        "severity": sev,
+        "issue": (issue or "").strip() or
+                 f"Learned rule: '{phrase}' was flagged by a human reviewer.",
+        "correction": (correction or "").strip() or
+                      f"Remove or rephrase '{phrase}', or get explicit approval.",
+        "source_feed_id": source_feed_id,
+    })
+    global COMPANY_BRAIN
+    new_brain = load_brain()
+    if new_brain:
+        COMPANY_BRAIN = new_brain
+    return stored, None
+
+
+@app.post("/learn",
+          summary="Teach the engine a new rule from a human correction",
+          description="Stores {phrase, category, severity, issue, correction} in "
+                      "brain.learned_rules (deduped on lower-cased phrase), reloads "
+                      "the in-memory brain, and returns the stored rule. From the "
+                      "next request on, any message containing the phrase is "
+                      "flagged — this is the 'learns and updates itself' path.")
+def learn(req: LearnRequest):
+    stored, err = _learn(req.phrase, req.category, req.severity,
+                         req.issue, req.correction, req.source_feed_id)
+    if err:
+        return err
+    return JSONResponse(status_code=201, content=stored)
+
+
+@app.get("/brain/learned",
+         summary="List learned rules, newest first",
+         description="Returns brain.learned_rules — every rule taught via "
+                     "/learn or /feed/{id}/override — newest first.")
+def brain_learned():
+    return list(reversed(COMPANY_BRAIN.get("learned_rules", [])))
+
+
 @app.get("/audit-log",
          summary="Read the audit trail, newest first",
          description="Returns entries from audit_log.jsonl, newest first. Optional "
@@ -245,6 +390,40 @@ def feed_inject(req: InjectRequest):
     if item is None:
         return JSONResponse(status_code=503, content={"error": "feed pipeline not started"})
     return item
+
+
+@app.post("/feed/{feed_id}/override",
+          summary="Human verdict on a feed item: 'missed' teaches a rule",
+          description="decision='missed' requires phrase: it learns a rule "
+                      "(same as POST /learn with source_feed_id=id), re-runs the "
+                      "item's text, and flips the stored item to its new verdict — "
+                      "the UI can show it go CLEAN -> caught. "
+                      "decision='false_positive' just records the verdict. Either "
+                      "way an override record is appended to feed_log.jsonl and "
+                      "returned as 'override'.")
+def feed_override(feed_id: int, req: OverrideRequest):
+    item = slack_feed.get_item(feed_id)
+    if item is None:
+        return JSONResponse(status_code=404,
+                            content={"error": f"feed item {feed_id} not found"})
+    decision = (req.decision or "").strip().lower()
+    if decision not in {"missed", "false_positive"}:
+        return JSONResponse(status_code=422, content={
+            "error": "decision must be 'missed' or 'false_positive'"})
+    rule = recheck = None
+    if decision == "missed":
+        if not req.phrase or not req.phrase.strip():
+            return JSONResponse(status_code=422, content={
+                "error": "phrase is required when decision is 'missed'"})
+        rule, err = _learn(req.phrase, "LEARNED_RULE", "HIGH", None, None, feed_id)
+        if err:
+            return err
+        recheck = _verify(item["text"], item.get("context_type", "slack_message"))
+        slack_feed.update_item(feed_id, recheck)
+    override = slack_feed.record_override(
+        feed_id, decision, phrase=req.phrase, note=req.note,
+        rule_id=(rule or {}).get("id"))
+    return {"override": override, "rule": rule, "recheck": recheck}
 
 
 @app.get("/health",

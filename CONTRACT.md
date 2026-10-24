@@ -41,7 +41,7 @@ IPv6 `::1` where uvicorn doesn't listen; this bit us in testing.
   "suggested_rewrite": "full-text rewrite | null",
   "actions": [
     { "type": "HOLD_PAYMENT | ESCALATE | REQUEST_APPROVAL | BLOCK_AND_REDACT | SUGGEST_REWRITE",
-      "label": "human-readable next step (targets come from the brain, e.g. 'Escalate to Amara Osei')",
+      "label": "human-readable next step (targets come from the brain, e.g. 'Escalate to Darsh')",
       "target": "person/channel from the brain | null",
       "payload": { "...": "context for executing the action" } }
   ],

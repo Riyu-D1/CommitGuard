@@ -32,7 +32,7 @@
   "slack_demo_expense": {
     "label": "Slack demo — expense over limit",
     "context_type": "slack_message",
-    "text": "expensing the £6,800 monitoring tool — putting it on the company card this afternoon, too small to bug Amara right?"
+    "text": "expensing the £6,800 monitoring tool — putting it on the company card this afternoon, too small to bug Darsh right?"
   },
   "slack_demo_rev_leak": {
     "label": "Slack demo — revenue leak",

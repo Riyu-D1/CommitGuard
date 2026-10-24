@@ -83,5 +83,20 @@
     "label": "Finance — chasing a receivable",
     "context_type": "slack_message",
     "text": "chasing Acme Corp on their overdue invoice — they promised the wire this week"
+  },
+  "chase_who_owes": {
+    "label": "Chaser — who owes us money",
+    "context_type": "slack_message",
+    "text": "? who owes us money"
+  },
+  "chase_globex_mention": {
+    "label": "Chaser — overdue customer named",
+    "context_type": "slack_message",
+    "text": "Globex still hasn't paid INV-1048 — it's been sitting since the 20th"
+  },
+  "chase_promise_signal": {
+    "label": "Chaser — payment promise",
+    "context_type": "slack_message",
+    "text": "good news — Globex will pay INV-1048 on Friday, their AP confirmed"
   }
 }

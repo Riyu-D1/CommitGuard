@@ -356,6 +356,95 @@ for _name, _key, _must, _target_type, _want_target in [
         failures.append(f"{_name}: expected {sorted(_must)} with "
                         f"{_target_type}->{_want_target}, got {sorted(_types)}")
 
+# riyansh/chaser: receivables ageing + chase drafting. Pure-read cases run on
+# the live brain; writes go to a temp copy so company_brain.json is untouched.
+import chaser  # noqa: E402
+from datetime import date  # noqa: E402
+
+_today = date.today()
+_rep = chaser.ageing(main.COMPANY_BRAIN, today=_today)
+_ch_ok = (_rep["open_count"] >= 4
+          and all(i["bucket"] in chaser.BUCKETS for i in _rep["items"])
+          and _rep["total_outstanding_gbp"] >= _rep["overdue_gbp"]
+          and all(i["days_overdue"] >= 0 for i in _rep["items"]))
+print(f"\n=== chaser_ageing: {'PASS' if _ch_ok else 'FAIL'}")
+print(f"  outstanding=£{_rep['total_outstanding_gbp']:,} "
+      f"overdue=£{_rep['overdue_gbp']:,} buckets="
+      + json.dumps({k: v['count'] for k, v in _rep['buckets'].items()}))
+if not _ch_ok:
+    failures.append("chaser_ageing: bad ageing totals/buckets")
+
+_d = chaser.draft_chase(main.COMPANY_BRAIN, "INV-1048", feed_items=[])
+_d_ok = (not _d.get("error") and _d.get("draft_only") is True
+         and _d.get("subject") and _d.get("body")
+         and "INV-1048" in json.dumps(_d)
+         and any("due_date" in c for c in _d["cites"])
+         and _d["tone"] in chaser.TONES)
+print(f"\n=== chaser_draft: {'PASS' if _d_ok else 'FAIL'} "
+      f"(engine={_d.get('engine')}, tone={_d.get('tone')})")
+print(f"  subject: {_d.get('subject')}")
+if not _d_ok:
+    failures.append(f"chaser_draft: {_d.get('error') or 'missing fields'}")
+
+_dd = chaser.draft_chase(main.COMPANY_BRAIN, "Acme", feed_items=[])
+_acme_ok = (_dd.get("invoice_id") == "INV-1041"          # most overdue Acme
+            and _dd.get("tone") == "final_notice"
+            and _dd.get("escalate_to")
+            == main.COMPANY_BRAIN["people"]["cfo"])
+print(f"\n=== chaser_tone_ladder: {'PASS' if _acme_ok else 'FAIL'}")
+if not _acme_ok:
+    failures.append("chaser_tone_ladder: expected final_notice + CFO "
+                    f"escalation, got {_dd.get('tone')}")
+
+_ask_chase = main._ask_brain("who owes us money")
+_ask_ok = _ask_chase.get("matched") and _ask_chase.get("answer") \
+    and any(s["brain_key"] == "finance.invoices"
+            for s in _ask_chase.get("sources", []))
+print(f"\n=== chaser_ask: {'PASS' if _ask_ok else 'FAIL'}")
+print(f"  A: {_ask_chase.get('answer', '')[:110]}")
+if not _ask_ok:
+    failures.append("chaser_ask: receivables question didn't hit chaser")
+
+# paid/promise detection + chase_log persistence on a temp brain copy.
+_real_brain3 = (Path(main.BASE) / "company_brain.json").read_text()
+with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as _tf:
+    _tf.write(_real_brain3)
+    _tmp_brain3 = _tf.name
+try:
+    _b3 = json.loads(Path(_tmp_brain3).read_text())
+    _u1 = chaser.record_signal(_b3, "Globex paid INV-1048 — wire landed",
+                               brain_path=_tmp_brain3)
+    _b3r = json.loads(Path(_tmp_brain3).read_text())
+    _g = next(i for i in _b3r["finance"]["invoices"] if i["id"] == "INV-1048")
+    _entry = chaser.log_chase("INV-1049", brain_path=_tmp_brain3)
+    _b4 = json.loads(Path(_tmp_brain3).read_text())
+    _ini = next(i for i in _b4["finance"]["invoices"] if i["id"] == "INV-1049")
+    _sig_ok = (_g["status"] == "paid" and _g.get("chase_paid_from") == "overdue"
+               and any(u["kind"] == "paid" for u in _u1)
+               and any(e["kind"] == "chase" for e in _ini["chase_log"])
+               and chaser.record_signal(
+                   _b4, "Initech still hasn't paid INV-1049",
+                   brain_path=_tmp_brain3) == []
+               and (Path(main.BASE) / "company_brain.json").read_text()
+               == _real_brain3)
+finally:
+    os.unlink(_tmp_brain3)
+print(f"\n=== chaser_signals: {'PASS' if _sig_ok else 'FAIL'}")
+if not _sig_ok:
+    failures.append("chaser_signals: paid/promise/log persistence failed")
+
+# CHASE_INVOICE hand on a message naming an open receivable.
+_out_ch = main.verify_context(main.VerifyRequest(
+    text="Globex still hasn't paid INV-1048", context_type="slack_message"))
+_chase_act = [a for a in _out_ch["actions"] if a["type"] == "CHASE_INVOICE"
+              and a["target"] == "INV-1048"]
+print(f"\n=== chaser_action: {'PASS' if _chase_act else 'FAIL'}")
+for a in _out_ch["actions"]:
+    print(f"  {a['type']}: {a['label']} (target={a['target']})")
+if not _chase_act:
+    failures.append("chaser_action: no CHASE_INVOICE planned for a named "
+                    "overdue receivable")
+
 if failures:
     print("\nFAILURES:")
     for f in failures:

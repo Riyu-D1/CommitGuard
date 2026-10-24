@@ -276,6 +276,36 @@ a { color:inherit; text-decoration:none; }
 .sim button:disabled { color:var(--text-disabled); border-color:var(--border); cursor:default; }
 .sim .lbl { font:400 8.5px 'Space Mono',monospace; letter-spacing:.12em; color:#3f3f3f; padding-left:16px; }
 .kbd-hint { position:fixed; right:28px; bottom:26px; font:400 9px 'Space Mono',monospace; letter-spacing:.1em; color:#3f3f3f; }
+
+/* ── receivables panel (invoice chaser) ──────────────────────────── */
+.age-bar { display:flex; height:6px; border-radius:3px; overflow:hidden; margin-bottom:14px; background:var(--border); }
+.age-bar i { display:block; height:100%; }
+.age-b0 { background:#3a3a3a; } .age-b1 { background:var(--warning); }
+.age-b2 { background:#B86A2B; } .age-b3 { background:var(--accent); }
+.recv-row { display:flex; align-items:baseline; gap:10px; padding:9px 2px; border-bottom:1px solid var(--border); }
+.recv-row .rid { font:400 11px 'Space Mono',monospace; color:var(--text-primary); width:76px; flex:none; }
+.recv-row .rco { font-size:12.5px; color:var(--text-secondary); flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.recv-row .ramt { font:400 11px 'Space Mono',monospace; color:var(--text-primary); }
+.recv-row .rdays { font:400 9px 'Space Mono',monospace; letter-spacing:.06em; width:52px; text-align:right; flex:none; }
+.recv-row .rdays.late { color:var(--warning); }
+.recv-row .rdays.vlate { color:var(--accent); }
+.recv-row .prom { font:400 9px 'Space Mono',monospace; color:var(--text-disabled); }
+.recv-row button { font:400 9px 'Space Mono',monospace; letter-spacing:.08em; color:var(--text-display); border:1px solid var(--border-visible); border-radius:999px; padding:3px 10px; flex:none; }
+.recv-row button:hover { border-color:var(--text-secondary); }
+.recv-tot { font:400 10px 'Space Mono',monospace; letter-spacing:.09em; color:var(--text-secondary); margin-bottom:10px; }
+.recv-tot b { color:var(--text-primary); font-weight:400; }
+/* chase draft modal */
+#chaseModal { position:fixed; inset:0; z-index:80; display:none; align-items:center; justify-content:center; background:rgba(0,0,0,.72); }
+#chaseModal.open { display:flex; }
+.chase-box { width:min(640px,92vw); max-height:82vh; overflow-y:auto; background:var(--surface); border:1px solid var(--border-visible); border-radius:14px; padding:22px 24px; }
+.chase-box .tone-tag { font:700 9px 'Space Mono',monospace; letter-spacing:.12em; color:var(--warning); }
+.chase-box .tone-tag.final_notice { color:var(--accent); }
+.chase-box h3 { font:500 14px 'Space Grotesk',sans-serif; color:var(--text-display); margin:8px 0 12px; }
+.chase-box pre { white-space:pre-wrap; font:400 12.5px/1.65 'Space Grotesk',sans-serif; color:var(--text-primary); background:var(--black); border:1px solid var(--border); border-radius:10px; padding:14px 16px; }
+.chase-box .cites { margin-top:10px; font:400 9.5px 'Space Mono',monospace; color:var(--text-disabled); line-height:1.9; }
+.chase-box .btnrow { margin-top:16px; display:flex; gap:10px; align-items:center; }
+.chase-box .btnrow button { font:400 10px 'Space Mono',monospace; letter-spacing:.09em; border:1px solid var(--border-visible); border-radius:999px; padding:8px 16px; color:var(--text-display); }
+.chase-box .btnrow .hint { font:400 9px 'Space Mono',monospace; color:var(--text-disabled); margin-left:auto; }
 </style>
 </head>
 <body>
@@ -330,6 +360,12 @@ a { color:inherit; text-decoration:none; }
       </form>
       <div class="ask-out" id="askOut"></div>
     </section>
+    <section>
+      <h2>RECEIVABLES <span class="n" id="recvN"></span></h2>
+      <div class="recv-tot" id="recvTot"></div>
+      <div class="age-bar" id="ageBar"></div>
+      <div id="recvList"><div class="empty">[LOADING…]</div></div>
+    </section>
   </aside>
 </main>
 
@@ -338,6 +374,8 @@ a { color:inherit; text-decoration:none; }
   <span class="lbl">SIMULATION — INJECTS A SCENARIO INTO THE FEED</span>
 </div>
 <span class="kbd-hint">PRESS D — DEMO ZOOM</span>
+
+<div id="chaseModal"><div class="chase-box" id="chaseBox"></div></div>
 
 <script src="/vendor/thinking-orbs.js"></script>
 <script src="/vendor/orb.js"></script>
@@ -713,6 +751,74 @@ $('askForm').addEventListener('submit', async e => {
   }
 });
 
+/* ── receivables / invoice chaser ─────────────────────────────────── */
+const AGE_CLS = {'current':'age-b0','1-30':'age-b1','31-60':'age-b2','60+':'age-b3'};
+const money = n => '£' + (n || 0).toLocaleString('en-GB');
+async function refreshRecv() {
+  try {
+    const r = await api('/receivables');
+    const items = r.items || [];
+    $('recvN').textContent = `· ${money(r.overdue_gbp)} OVERDUE`;
+    $('recvTot').innerHTML = items.length
+      ? `<b>${money(r.total_outstanding_gbp)}</b> OUTSTANDING · <b>${r.open_count}</b> OPEN`
+      : 'NO OPEN RECEIVABLES';
+    const tot = Math.max(1, r.total_outstanding_gbp || 0);
+    $('ageBar').innerHTML = Object.keys(AGE_CLS).map(k => {
+      const b = (r.buckets || {})[k] || {amount_gbp: 0};
+      const w = b.amount_gbp / tot * 100;
+      return w ? `<i class="${AGE_CLS[k]}" style="width:${w}%" title="${k}: ${money(b.amount_gbp)}"></i>` : '';
+    }).join('');
+    $('recvList').innerHTML = items.map(i => {
+      const dCls = i.days_overdue > 60 ? 'vlate' : i.days_overdue > 0 ? 'late' : '';
+      const dTxt = i.days_overdue ? `${i.days_overdue}D LATE` : `DUE ${(i.due_date || '').slice(5)}`;
+      const prom = i.last_promise ? `<span class="prom" title="${esc(i.last_promise)}">◔ PROMISE</span>` : '';
+      const chased = i.chases_sent ? `<span class="prom">×${i.chases_sent} CHASED</span>` : '';
+      return `<div class="recv-row"><span class="rid">${esc(i.invoice_id)}</span>` +
+        `<span class="rco">${esc(i.counterparty)} ${prom}${chased}</span>` +
+        `<span class="ramt">${money(i.amount_gbp)}</span>` +
+        `<span class="rdays ${dCls}">${dTxt}</span>` +
+        `<button data-inv="${esc(i.invoice_id)}">CHASE</button></div>`;
+    }).join('') || `<div class="empty">NOTHING OWED — ALL RECEIVABLES PAID</div>`;
+    $('recvList').querySelectorAll('button[data-inv]').forEach(b =>
+      b.addEventListener('click', () => openChase(b.dataset.inv)));
+  } catch (e) {
+    $('recvList').innerHTML = `<div class="empty">[${esc(e.message).toUpperCase()}]</div>`;
+  }
+}
+
+async function openChase(inv) {
+  const box = $('chaseBox');
+  $('chaseModal').classList.add('open');
+  box.innerHTML = `<div class="empty">[DRAFTING…]</div>`;
+  orbFlash('composing', 2000);
+  try {
+    const d = await api('/chase', 'POST', {invoice_id: inv});
+    box.innerHTML =
+      `<span class="tone-tag ${esc(d.tone)}">${esc(d.tone || '').toUpperCase().replace('_',' ')}` +
+      `${d.escalate_to ? ' → ESCALATES TO ' + esc(d.escalate_to).toUpperCase() : ''}</span>` +
+      `<h3>${esc(d.subject)}</h3><pre>${esc(d.body)}</pre>` +
+      `<div class="cites">${(d.cites || []).map(c => '↳ ' + esc(c)).join('<br>')}</div>` +
+      `<div class="btnrow"><button id="chaseCopy">COPY DRAFT</button>` +
+      `<button id="chaseClose" class="ghost">CLOSE</button>` +
+      `<span class="hint">DRAFT ONLY — NOTHING IS SENT · ${esc(d.engine)}</span></div>`;
+    $('chaseCopy').onclick = async () => {
+      try { await navigator.clipboard.writeText(d.subject + '\n\n' + d.body);
+        $('chaseCopy').textContent = 'COPIED'; } catch (e) {
+        $('chaseCopy').textContent = 'COPY FAILED'; }
+    };
+    $('chaseClose').onclick = () => $('chaseModal').classList.remove('open');
+  } catch (e) {
+    box.innerHTML = `<div class="empty">[ERROR: ${esc(e.message).toUpperCase()}]</div>` +
+      `<div class="btnrow"><button onclick="document.getElementById('chaseModal').classList.remove('open')">CLOSE</button></div>`;
+  }
+}
+$('chaseModal').addEventListener('click', e => {
+  if (e.target.id === 'chaseModal') $('chaseModal').classList.remove('open');
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') $('chaseModal').classList.remove('open');
+});
+
 /* ── simulate ──────────────────────────────────────────────────────── */
 let simTexts = null;
 $('simBtn').addEventListener('click', async () => {
@@ -793,10 +899,11 @@ document.addEventListener('keydown', e => {
 
 /* ── boot ──────────────────────────────────────────────────────────── */
 pollFeed();
-refreshStats(); refreshBrain(); refreshLearned(); refreshStatus();
+refreshStats(); refreshBrain(); refreshLearned(); refreshStatus(); refreshRecv();
 setInterval(refreshStatus, 12000);
 setInterval(refreshLearned, 12000);
 setInterval(refreshBrain, 45000);
+setInterval(refreshRecv, 30000);
 </script>
 </body>
 </html>

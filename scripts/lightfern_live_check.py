@@ -6,7 +6,7 @@ CommitGuard server started from this checkout.
 
 What it does:
   1. Copies lightfern/CommitGuard Brain/ into a fresh temp dir (never the
-     repo copy), starts `uvicorn main:app` on 127.0.0.1:8004 with
+     repo copy), starts `uvicorn main:app` on 127.0.0.1:8008 with
      SLACK_BOT_TOKEN=disabled SLACK_REPLY=0 SLACK_CHANNEL_ID= and
      LIGHTFERN_APP_DIR=<the temp copy>.
   2. Asserts over HTTP + files (see STEPS below).
@@ -38,7 +38,7 @@ APP_SRC = ROOT / "lightfern" / "CommitGuard Brain"
 BRAIN_DISK = BACKEND / "company_brain.json"
 STATE_FILES = [BACKEND / "audit_log.jsonl", BACKEND / "feed_log.jsonl"]
 
-PORT = 8004
+PORT = 8008
 BASE_URL = f"http://127.0.0.1:{PORT}"
 LOG_PATH = Path("/tmp/lightfern-live-check-server.log")
 

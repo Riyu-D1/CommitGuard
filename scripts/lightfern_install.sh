@@ -24,14 +24,31 @@ SRC="$(cd "$(dirname "$0")/../lightfern/$APP_NAME" && pwd)"
 DEST="$LIB/$APP_NAME"
 
 mkdir -p "$DEST"
-# Everything except runtime state; .gitkeep files are harmless to copy.
+# Everything except per-run runtime state; .gitkeep files are harmless to copy.
 rsync -a --delete \
   --exclude 'inbox/*.json' --exclude 'inbox/done/' \
-  --exclude 'live/answers/*.json' --exclude 'live/feed.json' \
-  --exclude 'live/status.json' \
+  --exclude 'live/answers/*.json' \
   "$SRC/" "$DEST/"
 
 mkdir -p "$DEST/inbox/done" "$DEST/live/answers"
+
+# live/ starts neutral on every install — no stale feed or status survives a
+# reinstall; the bridge fills them the moment the backend starts.
+cat > "$DEST/live/feed.json" <<'JSON'
+{
+  "updated_at": null,
+  "entries": []
+}
+JSON
+cat > "$DEST/live/status.json" <<'JSON'
+{
+  "mode": "simulated",
+  "heartbeat_ts": null,
+  "checks_total": 0,
+  "last_check_ts": null,
+  "errors": []
+}
+JSON
 
 cat <<EOF
 

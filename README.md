@@ -1,12 +1,29 @@
 # CommitGuard
 
-CommitGuard watches your team's Slack and stops messages that break company
-policy, citing the company brain, and learns new rules when a human
-corrects it.
+CommitGuard is a finance brain built on Lightfern: it catches spend, payment
+and pricing commitments that break policy in Slack, chases overdue invoices
+with draft-only reminders, answers policy questions, and learns new rules
+from the team.
 
 Built for the Lightfern Company Brain Buildathon — Finance/Ops track.
 
-## How it works
+## What it does
+
+- **Guard** — every channel message runs through a deterministic rules engine
+  (regex + dictionary checks against the company brain, no LLM in the verdict
+  path). Violations get a threaded Block Kit reply that cites the exact brain
+  keys — expected vs found — plus an action plan (`HOLD_PAYMENT`, `ESCALATE`,
+  `REQUEST_APPROVAL`, `STAGE_INVOICE`, …). Everything lands in an append-only
+  audit log.
+- **Chase** — receivables ageing lives in the brain; `chase INV-1041` drafts a
+  tone-laddered payment reminder with cites to invoice terms. Drafts only —
+  nothing is ever sent. Paid/promise chatter in the channel updates invoice
+  state.
+- **Ask** — `? what's my spend limit` (or `POST /ask`) answers policy questions
+  in plain English, citing the brain keys the answer came from.
+- **Learn** — "MISSED SOMETHING" (`missed:` reply) teaches a rule the engine
+  enforces from the next request; "THIS WAS FINE" (`fine:` reply) teaches a
+  scoped exception. Learned rules are written back into the Lightfern brain.
 
 ```mermaid
 flowchart LR
@@ -21,40 +38,6 @@ flowchart LR
     ask --> dash
     reply -->|human override: "you missed this"| learn[/learn]
     learn -->|learned_rules, enforced immediately| brain
-```
-
-## Quickstart
-
-```bash
-cp backend/.env.example backend/.env   # Slack tokens optional — no .env = simulated mode
-scripts/run_demo.sh                    # API + dashboard on 127.0.0.1:8000
-open http://127.0.0.1:8000             # the dashboard
-```
-
-Works fully offline with every token unset. Use `127.0.0.1`, not
-`localhost` — some Macs resolve `localhost` to IPv6 where uvicorn doesn't
-listen.
-
-## Judging criteria → where it lives
-
-| Criterion | What we built | Where |
-|---|---|---|
-| **Onboarding test** | A new hire asks `? can I give a 20% discount?` in Slack (or `POST /ask`) and gets a plain-English answer that cites the exact brain keys it came from | `POST /ask`, `GET /brain/policies`, Slack question replies in `slack_feed.py` |
-| **Structured + unstructured** | Free-text messages checked against the structured brain — contracts, pricing floors, approval limits, trusted sender domains — every violation cites `brain_key`, expected vs found | `rules.py`, `company_brain.json` |
-| **Brain and hands** | The brain decides; the hands act: every verify result carries an `actions` plan (`HOLD_PAYMENT`, `ESCALATE`, `REQUEST_APPROVAL`, … with brain-sourced targets), `STAGE_INVOICE` queues payments for Round Treasury, `ESCALATE_FRAUD`, `APPLY_REWRITE_AND_LOG`, and every check lands in an append-only audit trail | `actions.py` `plan_actions`, `POST /execute-action`, `actions` on `/verify-context` + `/feed` |
-| **Learns and updates itself** | "You missed this" on any feed item teaches a `learned_rules` entry; "that's fine" teaches a `learned_exceptions` entry — both enforced by the deterministic engine from the next request, in Slack (`missed:`/`fine` thread replies) or over HTTP | `POST /learn`, `POST /feed/{id}/override`, `GET /brain/learned` |
-
-Detection is deterministic — regex + dictionary checks against the brain in
-under 5ms, fully offline (see `backend/bench.py`). An optional OpenAI layer
-polishes wording only; it can never flip a verdict.
-
-## Verify it yourself
-
-```bash
-cd backend && uv run python smoke_test.py    # prints ALL PASS
-curl -X POST http://127.0.0.1:8000/ask \
-  -H 'Content-Type: application/json' \
-  -d '{"question": "who approves a £7,000 spend?"}'
 ```
 
 ## Built on Lightfern
@@ -100,7 +83,7 @@ flowchart LR
   `live/feed.json` (last 100, atomic tmp+rename), polls `inbox/` every second
   and applies `learn`/`override`/`ask` commands through the exact functions
   the HTTP endpoints use, then re-exports so learned rules show up in
-  Lightfern. Unset = backend behaves exactly as today. Status:
+  Lightfern. Unset = backend behaves exactly as without the bridge. Status:
   `GET /lightfern/status`.
 - **Install** —
   `scripts/lightfern_install.sh ~/Library/Application\ Support/Lightfern/library`
@@ -108,19 +91,77 @@ flowchart LR
   `LIGHTFERN_APP_DIR=` line for `backend/.env`. Restart the backend; the
   home view's badge flips from `SIMULATED` to `LIVE`.
 
-> Honest note: this machine can't run Lightfern, so the app was validated
-> against the SDK itself — manifest parsed by the SDK's `safeParseManifest`,
-> `tsc --noEmit` against the SDK's `lightfern:host` types, and a vitest that
-> renders `home.tsx` against a fake ctx and clicks **Missed** (see
-> `lightfern/dev/`). The backend bridge is covered end-to-end by
-> `backend/test_lightfern_bridge.py`, and the whole integration against a
-> real server by `scripts/lightfern_live_check.py` — it spins up uvicorn on
-> 127.0.0.1:8008 with a temp app copy and asserts the check→feed, heartbeat,
-> learn, override, ask, brain-edit, corrupt-brain and restart flows (prints
-> `LIGHTFERN READY`). The home view's header shows **CONNECTED** whenever
-> `live/status.json`'s `heartbeat_ts` is fresh (~1s writes) and **STALE**
-> when it isn't. All company data in the app folder is **sample data** for
-> the demo.
+> The app is validated against the SDK itself — manifest parsed by
+> `safeParseManifest`, `tsc --noEmit` on `lightfern:host` types, a vitest that
+> renders `home.tsx` against a fake ctx (`lightfern/dev/`), plus end-to-end
+> coverage in `backend/test_lightfern_bridge.py` and
+> `scripts/lightfern_live_check.py` against a real server (prints
+> `LIGHTFERN READY`). All company data in the app folder is **sample data**.
+
+## Quick start
+
+```bash
+cd backend && uv venv --python 3.12 && uv pip install -r requirements.txt
+cp .env.example .env                        # all keys optional — see names below
+uv run uvicorn main:app --host 127.0.0.1 --port 8001
+open http://127.0.0.1:8001                  # the dashboard
+```
+
+`backend/.env` keys (all optional — with none set, the feed runs in simulated
+mode and every feature still works offline):
+
+| Key | Effect |
+|---|---|
+| `SLACK_BOT_TOKEN` + `SLACK_CHANNEL_ID` | both set → live Slack feed |
+| `SLACK_REPLY` | `1` = post threaded warnings + reactions; `0`/unset = monitor only |
+| `OPENAI_API_KEY` | optional wording polish — can never flip a verdict |
+| `LIGHTFERN_APP_DIR` | enables the Lightfern file bridge |
+
+Use `127.0.0.1`, not `localhost` — some Macs resolve `localhost` to IPv6
+where uvicorn doesn't listen.
+
+## Demo commands
+
+In the Slack channel (or via the dashboard):
+
+| Command | What happens |
+|---|---|
+| `? who owes us money` | ask-the-brain answers from `finance.invoices` — open + overdue receivables |
+| `chase INV-1041` | drafts a tone-laddered chase for the invoice — draft only, cites terms |
+| `? what's my spend limit` | answers with the approval tiers from the brain |
+
+Any normal message gets verified — paste an invoice with fresh bank details
+to see a CRITICAL `PAYMENT_REDIRECTION` catch.
+
+## Team
+
+| Name | Role |
+|---|---|
+| Riyansh | CEO |
+| Darsh | CFO |
+| Pranali | Team lead |
+
+## Judging criteria → where it lives
+
+| Criterion | What we built | Where |
+|---|---|---|
+| **Onboarding test** | A new hire asks `? can I give a 20% discount?` in Slack (or `POST /ask`) and gets a plain-English answer that cites the exact brain keys it came from | `POST /ask`, `GET /brain/policies`, Slack question replies in `slack_feed.py` |
+| **Structured + unstructured** | Free-text messages checked against the structured brain — contracts, pricing floors, approval limits, trusted sender domains — every violation cites `brain_key`, expected vs found | `rules.py`, `company_brain.json` |
+| **Brain and hands** | The brain decides; the hands act: every verify result carries an `actions` plan (`HOLD_PAYMENT`, `ESCALATE`, `REQUEST_APPROVAL`, … with brain-sourced targets), `STAGE_INVOICE` queues payments for Round Treasury, `ESCALATE_FRAUD`, `APPLY_REWRITE_AND_LOG`, and every check lands in an append-only audit trail | `actions.py` `plan_actions`, `POST /execute-action`, `actions` on `/verify-context` + `/feed` |
+| **Learns and updates itself** | "You missed this" on any feed item teaches a `learned_rules` entry; "that's fine" teaches a `learned_exceptions` entry — both enforced by the deterministic engine from the next request, in Slack (`missed:`/`fine` thread replies) or over HTTP | `POST /learn`, `POST /feed/{id}/override`, `GET /brain/learned` |
+
+Detection is deterministic — regex + dictionary checks against the brain in
+under 5ms, fully offline (see `backend/bench.py`). An optional OpenAI layer
+polishes wording only; it can never flip a verdict.
+
+## Verify it yourself
+
+```bash
+cd backend && uv run python smoke_test.py    # prints ALL PASS
+curl -X POST http://127.0.0.1:8001/ask \
+  -H 'Content-Type: application/json' \
+  -d '{"question": "who approves a £7,000 spend?"}'
+```
 
 ## Repo map
 

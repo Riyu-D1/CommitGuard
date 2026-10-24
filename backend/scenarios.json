@@ -83,5 +83,55 @@
     "label": "Finance — chasing a receivable",
     "context_type": "slack_message",
     "text": "chasing Acme Corp on their overdue invoice — they promised the wire this week"
+  },
+  "tribal_decision_terms": {
+    "label": "TribalSync — CFO decision: Net-45",
+    "context_type": "slack_message",
+    "text": "CFO here: from today, payment terms are Net-45 for all suppliers."
+  },
+  "tribal_decision_discount": {
+    "label": "TribalSync — new discount policy",
+    "context_type": "slack_message",
+    "text": "New policy going forward: discounts over 15% need sign-off from Amara."
+  },
+  "tribal_decision_retainer": {
+    "label": "TribalSync — retainer moved",
+    "context_type": "slack_message",
+    "text": "We've decided — effective this month CloudScale Ltd's retainer moves to £5,500/mo."
+  },
+  "tribal_nondecision": {
+    "label": "TribalSync — NOT a decision",
+    "context_type": "slack_message",
+    "text": "should we move to Net-45 for the Globex renewal?"
+  },
+  "audit_inv_over_contract": {
+    "label": "Audit — retainer over contract",
+    "context_type": "incoming_invoice",
+    "text": "INVOICE CS-1201\nCloudScale Ltd\nMonthly retainer: £5,400\nPlease pay to IBAN GB29REVOLUT12345689"
+  },
+  "audit_inv_iban_fraud": {
+    "label": "Audit — IBAN swapped",
+    "context_type": "incoming_invoice",
+    "text": "INVOICE CS-1202\nCloudScale Ltd — £5,000 due\nUpdated account: IBAN GB22BARC99887766554"
+  },
+  "audit_inv_sort_code": {
+    "label": "Audit — sort code mismatch",
+    "context_type": "incoming_invoice",
+    "text": "INVOICE PPD-441\nPinnacle Print & Design — services £1,800\nRemit to sort code 40-11-22, account number 99887766"
+  },
+  "audit_inv_hidden_clause": {
+    "label": "Audit — hidden CPI uplift",
+    "context_type": "incoming_invoice",
+    "text": "INVOICE PPD-442\nPinnacle Print & Design — £1,800\nIncludes 8% CPI uplift from this billing cycle"
+  },
+  "audit_inv_duplicate": {
+    "label": "Audit — paid invoice resent",
+    "context_type": "incoming_invoice",
+    "text": "INVOICE INV-1039\nAmazon Web Services\nCloud hosting — £1,140\nPlease pay to IBAN GB99AWSX12345678"
+  },
+  "audit_inv_clean": {
+    "label": "Audit — clean invoice",
+    "context_type": "incoming_invoice",
+    "text": "INVOICE PPD-440\nPinnacle Print & Design — £1,800 monthly retainer\nIBAN GB33LOYD22334455\nPayment terms: Net-30"
   }
 }

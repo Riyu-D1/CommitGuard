@@ -27,6 +27,15 @@ POST /feed/{id}/override — 'missed' teaches a rule, 'fine' a learned
 exception) and the bot answers "📚 Learned: …". Threads the bot has posted
 in are polled via conversations.replies for 30 min after posting, at most
 once every 5s.
+
+Brain-update proposals: when a check item reads as an authoritative
+decision, the injected decision_fn (TribalSync) attaches a brain-patch
+proposal to the feed item — never auto-applied. In reply mode it's posted
+into the message's thread as a "🧠 Brain update proposed" Block Kit card;
+a human answers "apply" or "reject" inside that thread, the injected
+proposal_fn (same logic as POST /brain/proposals/{id}/apply|reject) runs,
+and the bot confirms "🧠 Brain updated: …" or "🧠 Proposal rejected —
+brain unchanged." Proposal and override commands share one tracked thread.
 """
 
 import json
@@ -99,6 +108,8 @@ _started = False
 _bot_user_id = None  # from auth.test — our own messages are always ignored
 _ask = None          # injected by main — same logic as POST /ask
 _override = None     # injected by main — same logic as POST /feed/{id}/override
+_decision_fn = None  # injected by main — TribalSync brain-patch detector
+_proposal_fn = None  # injected by main — apply/reject a pending proposal
 _cmd_threads = []    # threads the bot replied in (thread commands)
 _last_cmd_scan = 0.0
 CMD_SCAN_SECONDS = 5
@@ -118,9 +129,11 @@ def _parse_question(text):
     return None
 
 
-def start(verify_fn, scenarios, ask_fn=None, override_fn=None) -> None:
+def start(verify_fn, scenarios, ask_fn=None, override_fn=None,
+          decision_fn=None, proposal_fn=None) -> None:
     """Called once from main's lifespan. Non-blocking: spawns a daemon thread."""
-    global _verify, _scenarios, _started, _last_ts, _ask, _override
+    global _verify, _scenarios, _started, _last_ts, _ask, _override, \
+        _decision_fn, _proposal_fn
     if _started:
         return
     _started = True
@@ -128,6 +141,8 @@ def start(verify_fn, scenarios, ask_fn=None, override_fn=None) -> None:
     _scenarios = list(scenarios.items())
     _ask = ask_fn
     _override = override_fn
+    _decision_fn = decision_fn
+    _proposal_fn = proposal_fn
     if MODE == "slack":
         _last_ts = str(time.time())  # tail -f: only messages posted after startup
         threading.Thread(target=_slack_loop, daemon=True, name="cg-slack-poll").start()
@@ -201,6 +216,22 @@ def _push(text, source, user=None, channel=None,
                 f.write(json.dumps(item) + "\n")
         except Exception as e:
             log.warning("feed_log write failed: %s", e)
+    if item.get("kind") != "question" and _decision_fn is not None:
+        proposal = None
+        try:
+            proposal = _decision_fn(item)
+        except Exception as e:
+            log.warning("decision detection failed: %s", e)
+        if proposal:
+            item["proposal"] = proposal
+            item["proposal_id"] = proposal.get("id")
+            try:  # audit trail: the item itself was logged pre-detection
+                with FEED_LOG_PATH.open("a") as f:
+                    f.write(json.dumps({"type": "proposal",
+                                        "feed_id": item["id"],
+                                        "proposal": proposal}) + "\n")
+            except Exception as e:
+                log.warning("feed_log proposal write failed: %s", e)
     _audit(item)
     _maybe_reply(item)
     return item
@@ -423,6 +454,45 @@ def build_question_blocks(item: dict) -> list:
     return blocks
 
 
+def _mesc(s) -> str:
+    """Escape user-derived text for Slack mrkdwn (& < > are special)."""
+    return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def build_proposal_blocks(item: dict) -> list:
+    """Block Kit payload for a brain-patch proposal: the key it would
+    change, who made the call, how many checks it touches, and the
+    evidence quote. Humans decide by replying 'apply' or 'reject' in the
+    thread — the card itself changes nothing."""
+    p = item.get("proposal") or {}
+    ev = p.get("evidence") or {}
+    author = _mesc(ev.get("author") or "feed")
+    n = len(p.get("affected_checks") or p.get("affected_feed_ids") or [])
+    key, old, new = (_mesc(p.get("brain_key")), _mesc(p.get("old")),
+                     _mesc(p.get("new")))
+    msg = _mesc((ev.get("message") or "").strip())
+    if len(msg) > 200:
+        msg = msg[:200] + "…"
+    return [{
+        "type": "header",
+        "text": {"type": "plain_text", "emoji": True,
+                 "text": "🧠 Brain update proposed"},
+    }, {
+        "type": "section",
+        "text": {"type": "mrkdwn",
+                 "text": f"*{key}*: {old} → {new}"},
+    }, {
+        "type": "context",
+        "elements": [{"type": "mrkdwn",
+                      "text": f"from @{author} · affects {n} "
+                              f"check{'s' if n != 1 else ''} · "
+                              "reply `apply` or `reject`"}],
+    }, {
+        "type": "section",
+        "text": {"type": "mrkdwn", "text": f">{msg or '—'}"},
+    }]
+
+
 def _post_question_reply(item: dict) -> None:
     data = _slack_request("chat.postMessage", payload={
         "channel": item["channel"], "thread_ts": item["slack_ts"],
@@ -432,14 +502,24 @@ def _post_question_reply(item: dict) -> None:
         log.warning("chat.postMessage failed: %s", data.get("error"))
 
 
-def _track_thread(item: dict, data: dict) -> None:
+def _track_thread(item: dict, data: dict, proposal_id=None) -> None:
     """Remember a thread the bot posted in so the reply scanner picks up
-    'missed: <phrase>' / 'fine' commands under it."""
+    'missed: <phrase>' / 'fine' / 'apply' / 'reject' commands under it.
+    One tracked thread handles both command families — a proposal card
+    posted under an already-tracked thread merges proposal_id into the
+    existing entry."""
     if not data.get("ok"):
         return
+    for th in _cmd_threads:
+        if th["channel"] == item["channel"] and \
+                th["thread_ts"] == item["slack_ts"]:
+            if proposal_id:
+                th["proposal_id"] = proposal_id
+            return
     _cmd_threads.append({"channel": item["channel"],
                          "thread_ts": item["slack_ts"],
                          "feed_id": item.get("id"),
+                         "proposal_id": proposal_id,
                          "posted": time.time(),
                          "seen": {item["slack_ts"]}})
 
@@ -465,6 +545,19 @@ def _post_advisory_reply(item: dict) -> None:
     _track_thread(item, data)
 
 
+def _post_proposal_reply(item: dict) -> None:
+    """Post the '🧠 Brain update proposed' card into the message's thread
+    and register that thread for apply/reject commands."""
+    data = _slack_request("chat.postMessage", payload={
+        "channel": item["channel"], "thread_ts": item["slack_ts"],
+        "text": "🧠 Brain update proposed",
+        "blocks": build_proposal_blocks(item)})
+    if not data.get("ok"):
+        log.warning("chat.postMessage failed: %s", data.get("error"))
+    _track_thread(item, data,
+                  proposal_id=(item.get("proposal") or {}).get("id"))
+
+
 def _react_clean(item: dict) -> None:
     """✅ on a clean message. missing_scope (no reactions:write) and every
     other failure are silent — a check-mark is never worth noise."""
@@ -485,7 +578,8 @@ def _maybe_reply(item: dict) -> None:
     LLM advisories gets a softer '💡 Worth a check' reply; a truly clean
     message gets only a ✅ reaction — never a thread reply, so the channel
     isn't spammed. A question gets a threaded Block Kit answer citing its
-    brain sources."""
+    brain sources. A check item carrying a brain-patch proposal also gets
+    a '🧠 Brain update proposed' card in the same thread."""
     if not (SLACK_REPLY and item.get("source") == "slack" and item.get("slack_ts")):
         return
     try:
@@ -499,17 +593,29 @@ def _maybe_reply(item: dict) -> None:
             _react_clean(item)
     except Exception as e:
         log.warning("slack reply/react failed: %s", e)
+    if item.get("proposal"):
+        try:
+            _post_proposal_reply(item)
+        except Exception as e:
+            log.warning("slack proposal reply failed: %s", e)
 
 
 def _parse_thread_command(text):
     """Thread-reply commands under a CommitGuard thread:
     'missed: <phrase>' -> ('missed', phrase) teaches a rule;
-    'fine' -> ('false_positive', None) learns an exception for that item."""
+    'fine' -> ('false_positive', None) learns an exception for that item;
+    'apply'/'reject' -> decide a pending brain-patch proposal (exact word
+    only — they're common enough that a bare substring can't count)."""
     t = (text or "").strip()
     if t[:7].lower() == "missed:" and t[7:].strip():
         return "missed", t[7:].strip()
-    if t.lower().rstrip(".!") == "fine":
+    word = t.lower().rstrip(".!")
+    if word == "fine":
         return "false_positive", None
+    if word == "apply":
+        return "apply", None
+    if word == "reject":
+        return "reject", None
     return None
 
 
@@ -539,12 +645,37 @@ def _post_learned_reply(th: dict, payload: dict, err) -> None:
         log.warning("learned reply failed: %s", e)
 
 
+def _post_proposal_reply_status(th: dict, payload: dict, err) -> None:
+    """'🧠 Brain updated: …' / '⚠️ …' confirmation posted into the thread
+    after an apply/reject command runs the proposal — or a short reason
+    why it couldn't."""
+    if err:
+        text = f"⚠️ {err}"
+    else:
+        p = payload or {}
+        prop = p.get("proposal") or p.get("changelog") or {}
+        if p.get("applied"):
+            text = (f"🧠 Brain updated: {prop.get('brain_key', '—')} "
+                    f"{prop.get('old', '—')} → {prop.get('new', '—')} — "
+                    "affected feed items re-checked.")
+        else:
+            text = "🧠 Proposal rejected — brain unchanged."
+    try:
+        data = _slack_request("chat.postMessage", payload={
+            "channel": th["channel"], "thread_ts": th["thread_ts"],
+            "text": text})
+        if not data.get("ok"):
+            log.warning("proposal status reply failed: %s", data.get("error"))
+    except Exception as e:
+        log.warning("proposal status reply failed: %s", e)
+
+
 def _scan_thread_commands() -> None:
     """Poll conversations.replies on threads the bot posted in during the
     last 30 min, at most once every CMD_SCAN_SECONDS. Bot/subtype/own
     replies are ignored; 429 Retry-After is honored inside _slack_request."""
     global _last_cmd_scan
-    if _override is None:
+    if _override is None and _proposal_fn is None:
         return
     now = time.time()
     if now - _last_cmd_scan < CMD_SCAN_SECONDS:
@@ -579,6 +710,15 @@ def _scan_thread_commands() -> None:
             if not cmd:
                 continue
             decision, phrase = cmd
+            if decision in ("apply", "reject"):
+                if not th.get("proposal_id") or _proposal_fn is None:
+                    continue  # common words — only count on proposal threads
+                payload, err = _proposal_fn(
+                    th["proposal_id"], decision, m.get("user"))
+                _post_proposal_reply_status(th, payload, err)
+                continue
+            if _override is None:
+                continue
             payload, err = _override(th["feed_id"], decision, phrase=phrase)
             _post_learned_reply(th, payload, err)
 
@@ -600,11 +740,11 @@ def _sim_loop() -> None:
         time.sleep(SIM_SECONDS)
 
 
-def inject(text, user=None):
+def inject(text, user=None, context_type="slack_message"):
     """POST /feed/inject path — same pipeline, source 'manual'."""
     if _verify is None:
         return None
-    return _push(text, "manual", user=user)
+    return _push(text, "manual", user=user, context_type=context_type)
 
 
 def get_feed(since=None, limit=50) -> list:
@@ -620,6 +760,15 @@ def get_item(feed_id) -> dict:
             if i["id"] == feed_id:
                 return i
     return None
+
+
+def recent_texts(limit=60) -> list:
+    """Newest-first [(id, text, context_type)] for check items — the probes
+    TribalSync uses to predict which verdicts a brain patch would flip."""
+    with _lock:
+        items = [i for i in _feed if i.get("kind", "check") == "check"]
+    return [(i["id"], i["text"], i.get("context_type", "slack_message"))
+            for i in items[::-1][:limit]]
 
 
 def update_item(feed_id, res: dict) -> dict:

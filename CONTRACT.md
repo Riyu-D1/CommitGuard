@@ -29,7 +29,7 @@ IPv6 `::1` where uvicorn doesn't listen; this bit us in testing.
   "risk_level": "LOW | MEDIUM | HIGH",
   "violations": [
     {
-      "category": "FINANCIAL_POLICY | MARGIN_BREACH | TREASURY_LOCK | PAYMENT_REDIRECTION | CONTRACT_OVERAGE | APPROVAL_REQUIRED | PROMISE_BREACH | DUPLICATE_INVOICE | SENDER_DOMAIN_MISMATCH | URGENT_PAYMENT_CHANGE | UNVERIFIED_CLAIM | LEARNED_RULE (or any custom category passed to /learn)",
+      "category": "FINANCIAL_POLICY | MARGIN_BREACH | TREASURY_LOCK | PAYMENT_REDIRECTION | CONTRACT_OVERAGE | APPROVAL_REQUIRED | PROMISE_BREACH | DUPLICATE_INVOICE | SENDER_DOMAIN_MISMATCH | URGENT_PAYMENT_CHANGE | UNVERIFIED_CLAIM | CONFIDENTIAL_LEAK | PRICE_FLOOR | SPEND_OVER_LIMIT | NEW_VENDOR_BANK_CHANGE | PAYMENT_OFF_CYCLE | UNAPPROVED_PAYMENT | INVOICE_OVER_CONTRACT | BANK_DETAILS_MISMATCH | HIDDEN_CLAUSE | TERMS_MISMATCH | LEARNED_RULE (or any custom category passed to /learn)",
       "severity": "LOW | MEDIUM | HIGH | CRITICAL",
       "issue": "human-readable problem",
       "correction": "human-readable fix guidance",
@@ -40,7 +40,7 @@ IPv6 `::1` where uvicorn doesn't listen; this bit us in testing.
   ],
   "suggested_rewrite": "full-text rewrite | null",
   "actions": [
-    { "type": "HOLD_PAYMENT | ESCALATE | REQUEST_APPROVAL | BLOCK_AND_REDACT | SUGGEST_REWRITE",
+    { "type": "HOLD_PAYMENT | ESCALATE | REQUEST_APPROVAL | BLOCK_AND_REDACT | SUGGEST_REWRITE | VERIFY_VENDOR | REQUEST_CREDIT_NOTE",
       "label": "human-readable next step (targets come from the brain, e.g. 'Escalate to Amara Osei')",
       "target": "person/channel from the brain | null",
       "payload": { "...": "context for executing the action" } }
@@ -60,7 +60,7 @@ Client rules:
 
 **Request**
 ```json
-{ "action_type": "SEND_APPROVED | APPLY_REWRITE_AND_LOG | APPROVE_OVERRIDE | STAGE_INVOICE | ESCALATE_FRAUD",
+{ "action_type": "SEND_APPROVED | APPLY_REWRITE_AND_LOG | APPROVE_OVERRIDE | STAGE_INVOICE | ESCALATE_FRAUD | HOLD_PAYMENT | VERIFY_VENDOR | REQUEST_CREDIT_NOTE | REQUEST_APPROVAL",
   "payload": { "text": "...", "reason": "required for APPROVE_OVERRIDE", "...": "anything else" } }
 ```
 
@@ -281,3 +281,44 @@ Replying inside a CommitGuard thread runs the same override logic:
 answers `📚 Learned: …` in the thread. Threads the bot has posted in are
 polled via `conversations.replies` for 30 min after posting, at most once
 every 5s; 429 `Retry-After` is honored.
+
+## Brain self-healing (TribalSync)
+
+Feed messages that read as authoritative decisions ("CFO: from today payment terms are Net-45") create pending brain-patch proposals — never auto-applied.
+
+### GET /brain/proposals?status=pending|applied|rejected (no param = all)
+Newest-first array of proposals:
+```json
+[{ "id": "bp_xxxx", "status": "pending | applied | rejected",
+   "brain_key": "financial_rules.max_payment_terms",
+   "old": "Net-30", "new": "Net-45",
+   "evidence": { "message": "...", "author": "U123 | label | null",
+                 "ts": "ISO-8601", "source": "slack | simulated | manual",
+                 "feed_id": 12 },
+   "affected_checks": ["check_payment_terms"],
+   "affected_feed_ids": [10, 12],
+   "confidence": 0.9, "detector": "regex | llm", "cue": "from today",
+   "created_ts": "ISO-8601", "decided_ts": null, "decided_by": null }]
+```
+### POST /brain/proposals/{id}/apply → 200 {"applied": true, "proposal": {...}, "changelog": {...}} · 404 unknown id · 422 already decided / brain moved since proposal
+Applies the patch through brain_store.apply_patch (atomic write + changelog), reloads the in-memory brain, and re-verifies the affected feed items so their verdicts visibly flip in /feed.
+### POST /brain/proposals/{id}/reject → 200 {"rejected": true, "proposal": {...}} · 404 / 422 same as apply.
+### GET /brain/changelog?limit=N
+Newest-first patch log: [{"id":"chg_…","ts":"…","brain_key":"…","old":…,"new":…,"changed":true,"meta":{"proposal_id":"…","decided_by":"…","author":"…"}}]. Every brain mutation — including learned_rules writes — flows through brain_store, and on_change hooks (e.g. the Lightfern bridge) can subscribe via brain_store.register_on_change.
+
+Slack thread commands (SLACK_REPLY=1): a proposal is posted into the message's thread as a Block Kit card; humans reply `apply` or `reject` inside that thread — same loop guards as `missed:`/`fine` (bot/subtype/own replies ignored).
+
+## AuditTrace (invoice & wire interceptor)
+
+context_type "incoming_invoice" (and invoice-ish slack messages — vendor, invoice no, or IBAN + amount present) additionally run backend/audit_trace.py on top of run_rules. New violation categories in the same shape:
+- INVOICE_OVER_CONTRACT (HIGH) — amount/rate over the contract; evidence carries delta_gbp (or delta_gbp_per_hr). Tighter than CONTRACT_OVERAGE: fires on ANY overage, not just +20%.
+- BANK_DETAILS_MISMATCH (CRITICAL) — IBAN/sort code/account no differs from the contract; deduped against PAYMENT_REDIRECTION per brain_key so the baseline verdicts never double-count.
+- HIDDEN_CLAUSE (HIGH) — uplift/CPI/auto-renew clause absent from the contract.
+- DUPLICATE_INVOICE (CRITICAL) — invoice no (or vendor+amount) already "paid" in finance.invoices.
+- TERMS_MISMATCH (MEDIUM) — payment terms differ from contract.payment_terms.
+Dedupe rule: an audit violation is suppressed when an existing violation has the same category or the same evidence.brain_key.
+
+New execute-action types (additive): HOLD_PAYMENT (10-min dedupe like STAGE_INVOICE), VERIFY_VENDOR (message points at the number on file — never the email), REQUEST_CREDIT_NOTE (drafted for the evidence delta_gbp), REQUEST_APPROVAL.
+
+Feed items may carry "proposal" (the proposal dict) and "proposal_id" when they triggered one — additive fields.
+POST /feed/inject accepts optional "context_type" (default "slack_message", must be a valid context) so invoice texts can be pushed as incoming_invoice.

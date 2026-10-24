@@ -41,8 +41,8 @@ listen.
 |---|---|---|
 | **Onboarding test** | A new hire asks `? can I give a 20% discount?` in Slack (or `POST /ask`) and gets a plain-English answer that cites the exact brain keys it came from | `POST /ask`, `GET /brain/policies`, Slack question replies in `slack_feed.py` |
 | **Structured + unstructured** | Free-text messages checked against the structured brain — contracts, pricing floors, approval limits, trusted sender domains — every violation cites `brain_key`, expected vs found | `rules.py`, `company_brain.json` |
-| **Brain and hands** | The brain decides; the hands act: every verify result carries an `actions` plan (`HOLD_PAYMENT`, `ESCALATE`, `REQUEST_APPROVAL`, … with brain-sourced targets), `STAGE_INVOICE` queues payments for Round Treasury, `ESCALATE_FRAUD`, `APPLY_REWRITE_AND_LOG`, and every check lands in an append-only audit trail | `actions.py` `plan_actions`, `POST /execute-action`, `actions` on `/verify-context` + `/feed` |
-| **Learns and updates itself** | "You missed this" on any feed item teaches a `learned_rules` entry; "that's fine" teaches a `learned_exceptions` entry — both enforced by the deterministic engine from the next request, in Slack (`missed:`/`fine` thread replies) or over HTTP | `POST /learn`, `POST /feed/{id}/override`, `GET /brain/learned` |
+| **Brain and hands** | The brain decides; the hands act: every verify result carries an `actions` plan (`HOLD_PAYMENT`, `ESCALATE`, `REQUEST_APPROVAL`, … with brain-sourced targets), `STAGE_INVOICE` queues payments for Round Treasury, `ESCALATE_FRAUD`, `APPLY_REWRITE_AND_LOG`, and every check lands in an append-only audit trail. AuditTrace parses invoices and reconciles every field against the signed contract — rate/amount overage, IBAN/sort-code/account mismatches (BEC signature), hidden uplift clauses, re-billed invoices, terms drift | `actions.py` `plan_actions`, `POST /execute-action`, `actions` on `/verify-context` + `/feed`, `audit_trace.py` |
+| **Learns and updates itself** | "You missed this" on any feed item teaches a `learned_rules` entry; "that's fine" teaches a `learned_exceptions` entry — both enforced by the deterministic engine from the next request. TribalSync goes further: an authoritative decision in the feed ("CFO: from today, terms are Net-45") becomes a pending brain-patch proposal with evidence and predicted impact — a human applies or rejects it (Slack thread `apply`/`reject` or HTTP), and every mutation lands in the brain changelog | `POST /learn`, `POST /feed/{id}/override`, `GET /brain/learned`, `tribal_sync.py`, `brain_store.py`, `GET /brain/proposals`, `GET /brain/changelog` |
 
 Detection is deterministic — regex + dictionary checks against the brain in
 under 5ms, fully offline (see `backend/bench.py`). An optional OpenAI layer
@@ -62,7 +62,7 @@ curl -X POST http://127.0.0.1:8000/ask \
 | Path | Owner | What |
 |---|---|---|
 | `backend/rules.py` `actions.py` `company_brain.json` `scenarios.json` `smoke_test.py` `bench.py` `seed_audit.py` `onboarding.py` | Darsh | Deterministic engine + action handlers + brain data + tests |
-| `backend/main.py` `llm_enrich.py` `slack_feed.py` `scripts/` | Riyansh | FastAPI orchestration, optional OpenAI stage (fail-open), Slack feed + questions, demo scripts |
+| `backend/main.py` `llm_enrich.py` `slack_feed.py` `brain_store.py` `tribal_sync.py` `audit_trace.py` `scripts/` | Riyansh | FastAPI orchestration, optional OpenAI stage (fail-open), Slack feed + questions, atomic brain writer (single-writer + changelog + on-change hooks), TribalSync decision→patch proposals, AuditTrace invoice reconciliation, demo scripts |
 | `demo/` `plugin/` `pitch/` | Pranali | All frontend: demo UI, Inspector, simulator/plugin, pitch assets |
 | `team/` | all | Per-person phase plans + agent prompts (`team/riyansh`, `team/darsh`, `team/pranali`) |
 | `TOMORROW.md` | shared | **Day-of runbook — the only doc you need open** |

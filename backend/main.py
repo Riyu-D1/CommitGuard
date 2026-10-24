@@ -15,6 +15,9 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 import rules
 import actions
 import slack_feed
+import tribal_sync
+import brain_store
+import audit_trace
 from llm_enrich import llm_enrich, llm_enabled, llm_polish_answer
 
 from rules import explain_policy, policy_cards
@@ -25,7 +28,9 @@ BRAIN_PATH = BASE / "company_brain.json"
 @asynccontextmanager
 async def lifespan(_app):
     slack_feed.start(verify_fn=_verify, scenarios=SCENARIOS,
-                     ask_fn=_ask_brain, override_fn=_slack_override)
+                     ask_fn=_ask_brain, override_fn=_slack_override,
+                     decision_fn=_decision_for_item,
+                     proposal_fn=_proposal_decision)
     yield
 
 
@@ -79,6 +84,7 @@ class ActionRequest(BaseModel):
 class InjectRequest(BaseModel):
     text: str
     user: Optional[str] = None
+    context_type: Optional[str] = None
 
 
 class AskRequest(BaseModel):
@@ -119,14 +125,26 @@ SCENARIOS = json.loads(SCENARIOS_PATH.read_text()) if SCENARIOS_PATH.exists() el
 
 def _verify(text: str, context_type: str) -> dict:
     t0 = time.time()
+    brain = COMPANY_BRAIN  # one snapshot — a reload mid-verify stays coherent
     tr = time.time()
-    violations = rules.run_rules(text, COMPANY_BRAIN, context_type)
+    violations = rules.run_rules(text, brain, context_type)
+    audit_ran = context_type == "incoming_invoice"
+    try:
+        audit_added = audit_trace.audit_violations(text, brain,
+                                                   context_type, violations)
+        violations += audit_added
+        audit_ran = audit_ran or any(
+            v.get("category") in audit_trace.CATEGORIES
+            for v in audit_added)
+    except Exception:
+        pass  # audit is additive — never let it take down /verify
+    violations = rules._apply_exceptions(text, violations, brain)
     rules_ms = round((time.time() - tr) * 1000, 2)
     engine = "rules"
     advisories = []
     full_rewrite = None
 
-    llm = llm_enrich(text, context_type, violations, COMPANY_BRAIN)
+    llm = llm_enrich(text, context_type, violations, brain)
     if llm:
         engine = "rules+llm"
         advisories = llm.get("violations", [])
@@ -147,13 +165,67 @@ def _verify(text: str, context_type: str) -> dict:
         "suggested_rewrite": suggested_rewrite,
         "meta": {
             "engine": engine,
-            "checks_run": len(rules.ALL_CHECKS),
+            "checks_run": len(rules.ALL_CHECKS) +
+            (audit_trace.CHECK_COUNT if audit_ran else 0),
             "latency_ms": round((time.time() - t0) * 1000, 1),
             "rules_ms": rules_ms,
         },
     }
-    result["actions"] = actions.plan_actions(result, COMPANY_BRAIN)
+    result["actions"] = actions.plan_actions(result, brain)
     return result
+
+
+def _on_brain_change(brain_key, old, new, meta):
+    """brain_store on_change: reload the in-memory brain and re-verify any
+    feed items a patch was predicted to flip, so their verdicts visibly
+    change in /feed (the 'self-healing brain' demo beat)."""
+    global COMPANY_BRAIN
+    fresh = load_brain()
+    if fresh:
+        COMPANY_BRAIN = fresh
+    for fid in (meta or {}).get("affected_feed_ids") or []:
+        try:
+            it = slack_feed.get_item(fid)
+            if it and it.get("kind", "check") == "check":
+                slack_feed.update_item(
+                    fid, _verify(it["text"],
+                                 it.get("context_type", "slack_message")))
+        except Exception:
+            continue
+
+
+brain_store.register_on_change(_on_brain_change)
+
+
+def _decision_for_item(item):
+    """slack_feed decision_fn: run TribalSync detection on a checked feed
+    item; recent feed texts are the probes used to predict which verdicts
+    the patch would flip. Fail open — detection never breaks the feed."""
+    try:
+        if item.get("kind") != "check":
+            return None
+        probes = slack_feed.recent_texts(limit=60)
+        return tribal_sync.build_proposal(
+            item.get("text", ""), COMPANY_BRAIN,
+            meta={"feed_id": item.get("id"), "author": item.get("user"),
+                  "ts": item.get("ts"), "source": item.get("source"),
+                  "context_type": item.get("context_type")},
+            probes=probes)
+    except Exception:
+        return None
+
+
+def _proposal_decision(proposal_id, action, user):
+    """slack_feed proposal_fn: 'apply'/'reject' thread commands — same
+    logic as the HTTP endpoints. Returns (payload, error_message)."""
+    try:
+        if action == "apply":
+            return tribal_sync.apply_proposal(
+                proposal_id, decided_by=user or "slack"), None
+        return tribal_sync.reject_proposal(
+            proposal_id, decided_by=user or "slack"), None
+    except Exception as e:
+        return None, str(e)
 
 
 @app.post("/verify-context",
@@ -250,12 +322,66 @@ def get_brain():
 def reload_brain():
     global COMPANY_BRAIN
     try:
-        COMPANY_BRAIN = load_brain()
+        fresh = load_brain()
     except Exception as e:
         raise HTTPException(422, {"reloaded": False, "error": str(e)})
-    if not COMPANY_BRAIN:
+    if not fresh:
         raise HTTPException(422, {"reloaded": False, "error": "company_brain.json empty or malformed"})
+    COMPANY_BRAIN = fresh
     return {"reloaded": True, "keys": list(COMPANY_BRAIN.keys())}
+
+
+@app.get("/brain/proposals",
+         summary="List brain-patch proposals (TribalSync)",
+         description="Newest-first proposals detected from authoritative feed "
+                     "decisions. ?status=pending|applied|rejected filters; no "
+                     "param returns all. Never auto-applied.")
+def brain_proposals(status: Optional[str] = None):
+    if status is not None and status not in {"pending", "applied", "rejected"}:
+        return JSONResponse(status_code=422, content={
+            "error": "status must be pending|applied|rejected"})
+    return tribal_sync.list_proposals(status=status)
+
+
+@app.get("/brain/changelog",
+         summary="Applied brain patches, newest first",
+         description="The brain_store changelog — every TribalSync proposal "
+                     "patch applied to company_brain.json, with before/after "
+                     "values and citation.")
+def brain_changelog(limit: int = 50):
+    return brain_store.changelog(limit=limit)
+
+
+@app.get("/brain/proposals/{pid}", summary="One brain-patch proposal")
+def brain_proposal(pid: str):
+    prop = tribal_sync.get_proposal(pid)
+    if prop is None:
+        raise HTTPException(404, {"error": f"proposal {pid} not found"})
+    return prop
+
+
+@app.post("/brain/proposals/{pid}/apply",
+          summary="Apply a brain patch (human approval)",
+          description="Writes the patch through brain_store (atomic write + "
+                      "changelog + on_change hooks), reloads the brain, and "
+                      "re-verifies the proposal's affected feed items.")
+def brain_proposal_apply(pid: str):
+    if tribal_sync.get_proposal(pid) is None:
+        raise HTTPException(404, {"error": f"proposal {pid} not found"})
+    try:
+        return tribal_sync.apply_proposal(pid, decided_by="http")
+    except (ValueError, KeyError) as e:
+        return JSONResponse(status_code=422, content={"error": str(e)})
+
+
+@app.post("/brain/proposals/{pid}/reject", summary="Reject a brain patch")
+def brain_proposal_reject(pid: str):
+    if tribal_sync.get_proposal(pid) is None:
+        raise HTTPException(404, {"error": f"proposal {pid} not found"})
+    try:
+        return tribal_sync.reject_proposal(pid, decided_by="http")
+    except (ValueError, KeyError) as e:
+        return JSONResponse(status_code=422, content={"error": str(e)})
 
 
 LEARN_SEVERITIES = {"MEDIUM", "HIGH", "CRITICAL"}
@@ -379,7 +505,11 @@ def feed_stats():
 def feed_inject(req: InjectRequest):
     if not req.text or not req.text.strip():
         return JSONResponse(status_code=422, content={"error": "text must be non-empty"})
-    item = slack_feed.inject(req.text, user=req.user)
+    if req.context_type is not None and req.context_type not in VALID_CONTEXT_TYPES:
+        return JSONResponse(status_code=422, content={
+            "error": f"context_type must be one of {sorted(VALID_CONTEXT_TYPES)}"})
+    item = slack_feed.inject(req.text, user=req.user,
+                             context_type=req.context_type or "slack_message")
     if item is None:
         return JSONResponse(status_code=503, content={"error": "feed pipeline not started"})
     return item

@@ -244,6 +244,36 @@ a { color:inherit; text-decoration:none; }
 .learn-card .ts { margin-left:auto; }
 .learn-card.exc .ph { color:var(--text-secondary); }
 .rail .empty { padding:28px 0; text-align:left; }
+/* ── brain updates (TribalSync proposals + changelog) ─────────────── */
+.prop-card { border:1px solid var(--border); border-radius:12px; padding:12px 16px; margin-bottom:10px; }
+.prop-card.prop-done { opacity:.4; }
+.prop-card.prop-done .prop-btns { display:none; }
+.prop-key { font:400 10.5px 'Space Mono',monospace; color:var(--text-primary); word-break:break-all; }
+.prop-diff { margin-top:7px; display:flex; flex-wrap:wrap; gap:7px; align-items:baseline; font:400 12px 'Space Mono',monospace; }
+.prop-diff .old { color:var(--text-disabled); text-decoration:line-through; word-break:break-all; }
+.prop-diff .arr { color:var(--text-disabled); }
+.prop-diff .new { color:var(--warning); word-break:break-all; }
+.prop-msg {
+  margin-top:7px; font:italic 400 11px/1.55 'Space Mono',monospace; color:var(--text-secondary);
+  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
+}
+.prop-meta { margin-top:8px; display:flex; flex-wrap:wrap; gap:6px; font:400 9px 'Space Mono',monospace; letter-spacing:.08em; color:var(--text-disabled); }
+.prop-btns { margin-top:10px; display:flex; gap:8px; align-items:center; }
+.prop-btns button { font:400 10px 'Space Mono',monospace; letter-spacing:.09em; border-radius:999px; padding:5px 14px; }
+.prop-btns .prop-apply { border:1px solid var(--success); color:var(--success); }
+.prop-btns .prop-apply:hover:not(:disabled) { background:var(--success); color:var(--black); }
+.prop-btns .prop-reject { border:1px solid var(--border-visible); color:var(--text-disabled); }
+.prop-btns .prop-reject:hover:not(:disabled) { color:var(--text-primary); border-color:var(--text-secondary); }
+.prop-btns button:disabled { opacity:.4; cursor:default; }
+.prop-card .err { font:400 10px 'Space Mono',monospace; color:var(--accent); }
+.rail-h3 { margin:20px 0 10px; font:400 9px 'Space Mono',monospace; letter-spacing:.14em; color:var(--text-disabled); }
+.chg-card { border:1px solid var(--border); border-radius:12px; padding:9px 14px; margin-bottom:8px; font:400 9.5px 'Space Mono',monospace; letter-spacing:.05em; }
+.chg-card .key { display:block; color:var(--text-secondary); word-break:break-all; }
+.chg-card .row { margin-top:4px; display:flex; gap:6px; align-items:baseline; }
+.chg-card .old { color:var(--text-disabled); text-decoration:line-through; word-break:break-all; }
+.chg-card .arr { color:var(--text-disabled); }
+.chg-card .new { color:var(--success); word-break:break-all; }
+.chg-card .ts { margin-left:auto; flex:none; color:var(--text-disabled); }
 .ask-row { display:flex; gap:8px; }
 .ask-row input {
   flex:1; min-width:0; background:transparent; border:none; border-bottom:1px solid var(--border-visible);
@@ -321,6 +351,10 @@ a { color:inherit; text-decoration:none; }
     <section>
       <h2>LEARNED <span class="n" id="learnedN"></span></h2>
       <div id="learned"><div class="empty">NOTHING LEARNED YET — CORRECT A VERDICT TO TEACH THE ENGINE</div></div>
+    </section>
+    <section>
+      <h2>BRAIN UPDATES <span class="n" id="brainUpdatesN"></span></h2>
+      <div id="brainUpdates"><div class="empty">NO PENDING UPDATES — DECISIONS IN THE FEED BECOME PATCHES HERE</div></div>
     </section>
     <section>
       <h2>ASK THE BRAIN</h2>
@@ -487,12 +521,17 @@ function cardHtml(item) {
            (a.suggested_rewrite ? ` — <i>${esc(a.suggested_rewrite)}</i>` : '') + `</div>`;
     if (item.suggested_rewrite)
       h += `<div class="i-rewrite"><span class="lbl">SUGGESTED REWRITE</span><p>${esc(item.suggested_rewrite)}</p></div>`;
-    if ((item.actions || []).length) {
-      h += `<div class="i-actions"><span class="lbl">ACTIONS</span>` +
-           item.actions.map(a => {
-             const crit = /HOLD|ESCALATE|BLOCK/.test(a.type) ? ' crit' : '';
-             return `<span class="chip${crit}">${esc(a.label || a.type).toUpperCase()}</span>`;
-           }).join('') + `</div>`;
+    if ((item.actions || []).length || item.proposal) {
+      h += `<div class="i-actions">` +
+           ((item.actions || []).length
+             ? `<span class="lbl">ACTIONS</span>` +
+               item.actions.map(a => {
+                 const crit = /HOLD|ESCALATE|BLOCK/.test(a.type) ? ' crit' : '';
+                 return `<span class="chip${crit}">${esc(a.label || a.type).toUpperCase()}</span>`;
+               }).join('')
+             : ``) +
+           (item.proposal ? `<span class="chip">🧠 BRAIN UPDATE PROPOSED → SEE RAIL</span>` : ``) +
+           `</div>`;
     }
   }
 
@@ -600,6 +639,7 @@ function onItems(batch) {
   });
   while (strip.length > 56) strip.shift();
   renderStrip();
+  if (batch.some(i => i.proposal)) refreshBrainUpdates();
   const worst = flagged.find(i => maxSev(i) === 3) || flagged[0];
   setTimeout(() => {
     if (worst) {
@@ -692,6 +732,88 @@ async function refreshLearned() {
     if (learnedNew) orbFlash('shaping', 3000);
     learnedPrimed = true;
   } catch (e) {}
+}
+
+/* ── brain updates (TribalSync: feed decisions → human-approved patches) ── */
+async function refreshBrainUpdates() {
+  try {
+    const props = await api('/brain/proposals?status=pending');
+    let changes = [];
+    try { changes = await api('/brain/changelog?limit=5'); } catch (e) { changes = []; }
+    const list = Array.isArray(props) ? props : [];
+    if (!Array.isArray(changes)) changes = [];
+    $('brainUpdatesN').textContent = list.length ? `· ${list.length} PENDING` : '';
+    let h = '';
+    if (!list.length) {
+      h = `<div class="empty">NO PENDING UPDATES — DECISIONS IN THE FEED BECOME PATCHES HERE</div>`;
+    } else {
+      h = list.map(p => {
+        const author = (p.evidence && p.evidence.author) || p.author || 'feed';
+        const checks = (p.affected_checks || []).length;
+        const msg = String((p.evidence && p.evidence.message) || '').trim();
+        return `<div class="prop-card" data-pid="${esc(p.id)}">` +
+          `<div class="prop-key">${esc(p.brain_key)}</div>` +
+          `<div class="prop-diff"><span class="old">${esc(fmtVal(p.old))}</span>` +
+          `<span class="arr">→</span><span class="new">${esc(fmtVal(p.new))}</span></div>` +
+          (msg ? `<div class="prop-msg">“${esc(msg.length > 140 ? msg.slice(0, 139) + '…' : msg)}”</div>` : ``) +
+          `<div class="prop-meta"><span>FROM ${esc(String(author).toUpperCase())}</span>` +
+          `<span>·</span><span>AFFECTS ${checks} CHECK${checks === 1 ? '' : 'S'}</span>` +
+          (p.detector ? `<span>·</span><span>${esc(String(p.detector).toUpperCase())}</span>` : ``) +
+          `</div>` +
+          `<div class="prop-btns"><button class="prop-apply" data-id="${esc(p.id)}">APPLY</button>` +
+          `<button class="prop-reject" data-id="${esc(p.id)}">REJECT</button>` +
+          `<span class="err"></span></div></div>`;
+      }).join('');
+    }
+    if (changes.length) {
+      h += `<h3 class="rail-h3">RECENT CHANGES</h3>` + changes.map(c =>
+        `<div class="chg-card"><span class="key">${esc(c.brain_key)}</span>` +
+        `<div class="row"><span class="old">${esc(fmtVal(c.old))}</span>` +
+        `<span class="arr">→</span><span class="new">${esc(fmtVal(c.new))}</span>` +
+        `<span class="ts">${esc((c.ts || '').slice(11, 19))}</span></div></div>`).join('');
+    }
+    $('brainUpdates').innerHTML = h;
+    $('brainUpdates').querySelectorAll('.prop-apply').forEach(b =>
+      b.addEventListener('click', () => decideProposal(b.dataset.id, 'apply', b)));
+    $('brainUpdates').querySelectorAll('.prop-reject').forEach(b =>
+      b.addEventListener('click', () => decideProposal(b.dataset.id, 'reject', b)));
+  } catch (e) { /* endpoints pending — leave last render, fail quiet */ }
+}
+
+async function decideProposal(id, action, btn) {
+  const card = btn.closest('.prop-card');
+  if (!card) return;
+  const err = card.querySelector('.err');
+  if (err) { err.className = 'pending-note'; err.textContent = action === 'apply' ? 'APPLYING…' : 'REJECTING…'; }
+  card.querySelectorAll('button').forEach(b => b.disabled = true);
+  try {
+    const res = await api(`/brain/proposals/${encodeURIComponent(id)}/${action}`, 'POST');
+    card.classList.add('prop-done');
+    if (action === 'apply') {
+      orbFlash('shaping', 2500);
+      // repaint feed cards the patch flipped — the self-healing beat
+      const ids = new Set(((res && res.proposal && res.proposal.affected_feed_ids) || [])
+        .filter(x => x != null));
+      if (ids.size) {
+        try {
+          const fresh = await api('/feed?since=0&limit=60');
+          for (const it of (Array.isArray(fresh) ? fresh : [])) {
+            if (ids.has(it.id) && items.has(it.id)) {
+              Object.assign(items.get(it.id), it);
+              const c = renderItem(items.get(it.id), false);
+              if (c) c.classList.add('reverdict');
+            }
+          }
+        } catch (e) {}
+      }
+    } else {
+      orbFlash('breathing', 1500);
+    }
+    refreshBrainUpdates(); refreshBrain(); refreshStats(); refreshLearned();
+  } catch (e) {
+    card.querySelectorAll('button').forEach(b => b.disabled = false);
+    if (err) { err.className = 'err'; err.textContent = `[${String(e.message).toUpperCase()}]`; }
+  }
 }
 
 /* ── ask the brain ─────────────────────────────────────────────────── */
@@ -793,9 +915,10 @@ document.addEventListener('keydown', e => {
 
 /* ── boot ──────────────────────────────────────────────────────────── */
 pollFeed();
-refreshStats(); refreshBrain(); refreshLearned(); refreshStatus();
+refreshStats(); refreshBrain(); refreshLearned(); refreshBrainUpdates(); refreshStatus();
 setInterval(refreshStatus, 12000);
 setInterval(refreshLearned, 12000);
+setInterval(refreshBrainUpdates, 12000);
 setInterval(refreshBrain, 45000);
 </script>
 </body>

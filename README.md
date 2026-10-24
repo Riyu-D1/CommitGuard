@@ -41,8 +41,8 @@ listen.
 |---|---|---|
 | **Onboarding test** | A new hire asks `? can I give a 20% discount?` in Slack (or `POST /ask`) and gets a plain-English answer that cites the exact brain keys it came from | `POST /ask`, `GET /brain/policies`, Slack question replies in `slack_feed.py` |
 | **Structured + unstructured** | Free-text messages checked against the structured brain — contracts, pricing floors, approval limits, trusted sender domains — every violation cites `brain_key`, expected vs found | `rules.py`, `company_brain.json` |
-| **Brain and hands** | The brain decides; the hands act: `STAGE_INVOICE` queues payments for Round Treasury, `ESCALATE_FRAUD`, `APPLY_REWRITE_AND_LOG`, and every check lands in an append-only audit trail | `actions.py`, `POST /execute-action` |
-| **Learns and updates itself** | "You missed this" on any feed item teaches a `learned_rules` entry that's enforced by the deterministic engine from the next request | `POST /learn`, `POST /feed/{id}/override` |
+| **Brain and hands** | The brain decides; the hands act: every verify result carries an `actions` plan (`HOLD_PAYMENT`, `ESCALATE`, `REQUEST_APPROVAL`, … with brain-sourced targets), `STAGE_INVOICE` queues payments for Round Treasury, `ESCALATE_FRAUD`, `APPLY_REWRITE_AND_LOG`, and every check lands in an append-only audit trail | `actions.py` `plan_actions`, `POST /execute-action`, `actions` on `/verify-context` + `/feed` |
+| **Learns and updates itself** | "You missed this" on any feed item teaches a `learned_rules` entry; "that's fine" teaches a `learned_exceptions` entry — both enforced by the deterministic engine from the next request, in Slack (`missed:`/`fine` thread replies) or over HTTP | `POST /learn`, `POST /feed/{id}/override`, `GET /brain/learned` |
 
 Detection is deterministic — regex + dictionary checks against the brain in
 under 5ms, fully offline (see `backend/bench.py`). An optional OpenAI layer

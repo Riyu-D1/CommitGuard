@@ -20,6 +20,13 @@ engine. It's answered from the brain via the injected ask_fn (same logic as
 POST /ask), logged as a feed item with kind="question", and — in reply mode —
 gets a threaded Block Kit answer citing each source brain_key. Everything
 else is a compliance check with kind="check".
+
+Thread commands: replying inside a CommitGuard thread with "missed: <phrase>"
+or "fine" triggers the injected override_fn (same logic as
+POST /feed/{id}/override — 'missed' teaches a rule, 'fine' a learned
+exception) and the bot answers "📚 Learned: …". Threads the bot has posted
+in are polled via conversations.replies for 30 min after posting, at most
+once every 5s.
 """
 
 import json
@@ -91,6 +98,11 @@ _scenarios = []     # [(key, scenario_dict), ...]
 _started = False
 _bot_user_id = None  # from auth.test — our own messages are always ignored
 _ask = None          # injected by main — same logic as POST /ask
+_override = None     # injected by main — same logic as POST /feed/{id}/override
+_cmd_threads = []    # threads the bot replied in (thread commands)
+_last_cmd_scan = 0.0
+CMD_SCAN_SECONDS = 5
+CMD_THREAD_TTL = 1800  # poll a bot thread for commands for 30 min
 
 
 def _parse_question(text):
@@ -106,15 +118,16 @@ def _parse_question(text):
     return None
 
 
-def start(verify_fn, scenarios, ask_fn=None) -> None:
+def start(verify_fn, scenarios, ask_fn=None, override_fn=None) -> None:
     """Called once from main's lifespan. Non-blocking: spawns a daemon thread."""
-    global _verify, _scenarios, _started, _last_ts, _ask
+    global _verify, _scenarios, _started, _last_ts, _ask, _override
     if _started:
         return
     _started = True
     _verify = verify_fn
     _scenarios = list(scenarios.items())
     _ask = ask_fn
+    _override = override_fn
     if MODE == "slack":
         _last_ts = str(time.time())  # tail -f: only messages posted after startup
         threading.Thread(target=_slack_loop, daemon=True, name="cg-slack-poll").start()
@@ -155,6 +168,7 @@ def _push(text, source, user=None, channel=None,
             "matched": bool(res.get("matched")),
             "suggested_rewrite": None,
             "advisories": [],
+            "actions": [],
             "meta": res.get("meta") or {},
         }
     else:
@@ -172,6 +186,7 @@ def _push(text, source, user=None, channel=None,
             "violations": res["violations"],
             "suggested_rewrite": res["suggested_rewrite"],
             "advisories": res["advisories"],
+            "actions": res.get("actions") or [],
             "meta": res["meta"],
         }
     if slack_ts:
@@ -316,6 +331,10 @@ def _slack_loop() -> None:
         except Exception as e:
             _last_error = f"{type(e).__name__}: {e}"
             log.warning("slack poll failed: %s", e)
+        try:
+            _scan_thread_commands()
+        except Exception as e:
+            log.warning("thread command scan failed: %s", e)
         time.sleep(POLL_SECONDS)
 
 
@@ -349,6 +368,32 @@ def build_blocks(item: dict) -> list:
         if fix:
             blocks.append({"type": "section", "text": {"type": "mrkdwn",
                                                        "text": f">{fix}"}})
+    acts = item.get("actions") or []
+    if acts:
+        blocks.append({"type": "context", "elements": [{"type": "mrkdwn",
+            "text": "🤖 Actions: " + " · ".join(
+                a.get("label") or a.get("type", "") for a in acts)}]})
+    return blocks
+
+
+def build_advisory_blocks(item: dict) -> list:
+    """Softer reply for a rule-CLEAN message that still has LLM advisories:
+    '💡 Worth a check', each advisory's issue, and its suggested rewrite.
+    Advisories are advisory only — never framed as rule violations."""
+    blocks = [{
+        "type": "header",
+        "text": {"type": "plain_text", "emoji": True,
+                 "text": "💡 Worth a check"},
+    }]
+    for a in item.get("advisories") or []:
+        blocks.append({"type": "section", "text": {"type": "mrkdwn",
+            "text": f"• {a.get('issue', '')}"}})
+        fix = a.get("suggested_rewrite") or a.get("correction")
+        if fix:
+            blocks.append({"type": "section", "text": {"type": "mrkdwn",
+                                                       "text": f">{fix}"}})
+    blocks.append({"type": "context", "elements": [{"type": "mrkdwn",
+        "text": "Advisory only — the rules engine found no violation."}]})
     return blocks
 
 
@@ -387,6 +432,18 @@ def _post_question_reply(item: dict) -> None:
         log.warning("chat.postMessage failed: %s", data.get("error"))
 
 
+def _track_thread(item: dict, data: dict) -> None:
+    """Remember a thread the bot posted in so the reply scanner picks up
+    'missed: <phrase>' / 'fine' commands under it."""
+    if not data.get("ok"):
+        return
+    _cmd_threads.append({"channel": item["channel"],
+                         "thread_ts": item["slack_ts"],
+                         "feed_id": item.get("id"),
+                         "posted": time.time(),
+                         "seen": {item["slack_ts"]}})
+
+
 def _post_reply(item: dict) -> None:
     n = len(item["violations"])
     icon = _alert_icon(item)
@@ -396,6 +453,16 @@ def _post_reply(item: dict) -> None:
         "text": fallback, "blocks": build_blocks(item)})
     if not data.get("ok"):
         log.warning("chat.postMessage failed: %s", data.get("error"))
+    _track_thread(item, data)
+
+
+def _post_advisory_reply(item: dict) -> None:
+    data = _slack_request("chat.postMessage", payload={
+        "channel": item["channel"], "thread_ts": item["slack_ts"],
+        "text": "💡 Worth a check", "blocks": build_advisory_blocks(item)})
+    if not data.get("ok"):
+        log.warning("chat.postMessage failed: %s", data.get("error"))
+    _track_thread(item, data)
 
 
 def _react_clean(item: dict) -> None:
@@ -414,9 +481,11 @@ def _react_clean(item: dict) -> None:
 
 def _maybe_reply(item: dict) -> None:
     """Active mode (SLACK_REPLY=1, slack-sourced items only): a flagged
-    message gets one threaded Block Kit warning; a clean message gets only
-    a ✅ reaction — never a thread reply, so the channel isn't spammed.
-    A question gets a threaded Block Kit answer citing its brain sources."""
+    message gets one threaded Block Kit warning; a rule-clean message with
+    LLM advisories gets a softer '💡 Worth a check' reply; a truly clean
+    message gets only a ✅ reaction — never a thread reply, so the channel
+    isn't spammed. A question gets a threaded Block Kit answer citing its
+    brain sources."""
     if not (SLACK_REPLY and item.get("source") == "slack" and item.get("slack_ts")):
         return
     try:
@@ -424,10 +493,94 @@ def _maybe_reply(item: dict) -> None:
             _post_question_reply(item)
         elif item["status"] == "VIOLATION_DETECTED" and item["violations"]:
             _post_reply(item)
+        elif item.get("advisories"):
+            _post_advisory_reply(item)
         else:
             _react_clean(item)
     except Exception as e:
         log.warning("slack reply/react failed: %s", e)
+
+
+def _parse_thread_command(text):
+    """Thread-reply commands under a CommitGuard thread:
+    'missed: <phrase>' -> ('missed', phrase) teaches a rule;
+    'fine' -> ('false_positive', None) learns an exception for that item."""
+    t = (text or "").strip()
+    if t[:7].lower() == "missed:" and t[7:].strip():
+        return "missed", t[7:].strip()
+    if t.lower().rstrip(".!") == "fine":
+        return "false_positive", None
+    return None
+
+
+def _post_learned_reply(th: dict, payload: dict, err) -> None:
+    """'📚 Learned: …' confirmation posted into the thread after a thread
+    command runs the override — or a short reason why it couldn't."""
+    if err:
+        text = f"⚠️ Couldn't learn from that: {err}"
+    else:
+        rule = (payload or {}).get("rule")
+        exc = (payload or {}).get("exception")
+        if rule:
+            text = (f"📚 Learned: '{rule.get('phrase')}' is now a rule — "
+                    "enforced immediately.")
+        elif exc:
+            text = (f"📚 Learned: '{exc.get('phrase')}' no longer triggers "
+                    f"{exc.get('category')}.")
+        else:
+            text = "📚 Learned: override recorded."
+    try:
+        data = _slack_request("chat.postMessage", payload={
+            "channel": th["channel"], "thread_ts": th["thread_ts"],
+            "text": text})
+        if not data.get("ok"):
+            log.warning("learned reply failed: %s", data.get("error"))
+    except Exception as e:
+        log.warning("learned reply failed: %s", e)
+
+
+def _scan_thread_commands() -> None:
+    """Poll conversations.replies on threads the bot posted in during the
+    last 30 min, at most once every CMD_SCAN_SECONDS. Bot/subtype/own
+    replies are ignored; 429 Retry-After is honored inside _slack_request."""
+    global _last_cmd_scan
+    if _override is None:
+        return
+    now = time.time()
+    if now - _last_cmd_scan < CMD_SCAN_SECONDS:
+        return
+    _last_cmd_scan = now
+    cutoff = now - CMD_THREAD_TTL
+    for th in list(_cmd_threads):
+        if th["posted"] < cutoff:
+            _cmd_threads.remove(th)
+            continue
+        try:
+            data = _slack_request(
+                "conversations.replies",
+                params={"channel": th["channel"], "ts": th["thread_ts"],
+                        "oldest": th["thread_ts"], "limit": "100"})
+        except Exception as e:
+            log.warning("conversations.replies failed: %s", e)
+            continue
+        if not data.get("ok"):
+            log.warning("conversations.replies not ok: %s", data.get("error"))
+            continue
+        for m in sorted(data.get("messages", []),
+                        key=lambda x: float(x.get("ts", "0"))):
+            ts = m.get("ts")
+            if not ts or ts in th["seen"] or float(ts) <= float(th["thread_ts"]):
+                continue
+            th["seen"].add(ts)
+            if m.get("subtype") or m.get("bot_id") or \
+                    (_bot_user_id and m.get("user") == _bot_user_id):
+                continue
+            cmd = _parse_thread_command(m.get("text"))
+            if not cmd:
+                continue
+            decision, phrase = cmd
+            payload, err = _override(th["feed_id"], decision, phrase=phrase)
+            _post_learned_reply(th, payload, err)
 
 
 def _sim_loop() -> None:
@@ -477,7 +630,7 @@ def update_item(feed_id, res: dict) -> dict:
         for i in _feed:
             if i["id"] == feed_id:
                 for k in ("status", "risk_level", "violations",
-                          "suggested_rewrite", "advisories", "meta"):
+                          "suggested_rewrite", "advisories", "actions", "meta"):
                     i[k] = res[k]
                 return i
     return None

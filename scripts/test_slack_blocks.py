@@ -67,12 +67,33 @@ check("header text names the count",
 # 3. every violation got a section + a context evidence line
 secs = [b for b in blocks if b["type"] == "section"]
 ctxs = [b for b in blocks if b["type"] == "context"]
+ev_ctxs = [b for b in ctxs
+           if all("Brain says:" in e["text"] for e in b["elements"])]
 check("one+ section per violation", len(secs) >= len(res["violations"]),
       f"{len(secs)} sections / {len(res['violations'])} violations")
-check("one context block per violation", len(ctxs) == len(res["violations"]))
+check("one evidence context block per violation",
+      len(ev_ctxs) == len(res["violations"]))
 check("every context cites Brain says/Found",
       all("Brain says:" in e["text"] and "Found:" in e["text"]
-          for b in ctxs for e in b["elements"]))
+          for b in ev_ctxs for e in b["elements"]))
+
+# 3b. the verify result carries the actions plan, and the reply ends with a
+# '🤖 Actions: <label> · <label>' context line (labels carry brain targets)
+check("verify result carries actions plan",
+      isinstance(res.get("actions"), list)
+      and {a["type"] for a in res["actions"]} >= {"HOLD_PAYMENT", "ESCALATE"},
+      [a.get("type") for a in res.get("actions") or []])
+act_lines = [e["text"] for b in ctxs for e in b["elements"]
+             if e["text"].startswith("🤖 Actions:")]
+check("actions context line present", len(act_lines) == 1, act_lines)
+joined = " · ".join(a.get("label") or a.get("type", "")
+                    for a in res.get("actions") or [])
+check("actions line joins the plan labels",
+      bool(act_lines) and act_lines[0] == f"🤖 Actions: {joined}",
+      act_lines)
+check("actions line names hold + escalate targets",
+      bool(act_lines) and "Hold payment" in act_lines[0]
+      and "Escalate to" in act_lines[0], act_lines)
 
 # 4. clean input produces no reply payload (caller skips posting)
 clean = main.verify_context(main.VerifyRequest(
@@ -123,6 +144,51 @@ utext = " ".join(e.get("text", "") for b in ublocks
                  for e in ([b.get("text", {})] + b.get("elements", [])))
 check("unmatched question says it's not in the brain",
       "not in the company brain" in utext.lower(), utext[:120])
+
+# 7. rule-CLEAN but advisory-carrying items get a soft '💡 Worth a check'
+# thread reply — never framed as a rule violation
+adv_item = {
+    "violations": [],
+    "advisories": [{"category": "LLM_NOTE", "severity": "LOW",
+                    "issue": "Wording sounds over-committed.",
+                    "correction": "Soften the promise.",
+                    "suggested_rewrite": "We expect to ship it soon.",
+                    "source": "llm"}],
+    "actions": [],
+}
+ablocks = json.loads(json.dumps(slack_feed.build_advisory_blocks(adv_item)))
+check("advisory payload is valid JSON", isinstance(ablocks, list))
+check("advisory: all block types are valid Slack types",
+      all(b.get("type") in VALID_BLOCK_TYPES for b in ablocks),
+      sorted({b.get("type") for b in ablocks}))
+check("advisory: header says Worth a check",
+      ablocks[0].get("type") == "header"
+      and ablocks[0]["text"]["text"] == "💡 Worth a check",
+      ablocks[0])
+atext = json.dumps(ablocks)
+check("advisory: includes the issue and suggested rewrite",
+      "over-committed" in atext and "We expect to ship it soon" in atext)
+check("advisory: never claims a violation was caught",
+      "caught" not in ablocks[0]["text"]["text"].lower())
+
+# 8. thread commands: 'missed: <phrase>' teaches a rule; 'fine' marks the
+# flagged item a false positive (learned exception)
+check("parse 'missed: rebate'",
+      slack_feed._parse_thread_command("missed: rebate")
+      == ("missed", "rebate"))
+check("parse 'Missed:  Net-90 '",
+      slack_feed._parse_thread_command("Missed:  Net-90 ")
+      == ("missed", "Net-90"))
+check("parse 'fine'",
+      slack_feed._parse_thread_command("fine") == ("false_positive", None))
+check("parse 'Fine.'",
+      slack_feed._parse_thread_command("Fine.") == ("false_positive", None))
+check("plain chat is not a command",
+      slack_feed._parse_thread_command("looks fine to me") is None)
+check("'missed:' without a phrase is not a command",
+      slack_feed._parse_thread_command("missed:") is None)
+check("empty text is not a command",
+      slack_feed._parse_thread_command("") is None)
 
 print()
 if failures:

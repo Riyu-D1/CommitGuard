@@ -75,14 +75,28 @@ Text for each is in `backend/scenarios.json` (also shown by `GET /scenarios`).
 | `clean_email` text | ✅ reaction only — **no thread reply**, channel stays clean | same |
 | *(bonus)* `slack_urgent_fraud` text | 🛑 thread: "caught 2 issues" — `PAYMENT_REDIRECTION` + `URGENT_PAYMENT_CHANGE` | same |
 | `? can I give a 20% discount?` | 💡 thread: the answer + `Source: <brain_key> = <value>` per citation | feed item `kind: "question"` + `FEED_ASK` audit row |
+| reply `missed: <phrase>` in a warning thread | 📚 "Learned: …" — the phrase is a rule now | `learned_rules` entry + `FEED_OVERRIDE` row |
+| reply `fine` in a warning thread | 📚 "Learned: …" — a `learned_exceptions` entry suppresses that category for the phrase | same |
 
 Questions — `?…`, `ask:…`, or any `@CommitGuard` mention — are answered from
 the brain, never run through the rules engine, and count under `questions`
 in `/feed/stats`. Same path as `POST /ask`.
 
+Thread commands — `missed: <phrase>` teaches a rule, `fine` marks the item a
+false positive (learned exception). Both run the same logic as
+`POST /feed/{id}/override` and get a `📚 Learned: …` reply. Threads the bot
+has posted in are polled via `conversations.replies` for 30 min after
+posting, at most once every 5s, honoring `Retry-After`.
+
 Each thread reply is one Block Kit message: a header, then per violation a
 section with the issue, a context line citing the brain
-(`Brain says: <expected> · Found: <found>`), and a `> fix` quote.
+(`Brain says: <expected> · Found: <found>`), a `> fix` quote, and a closing
+`🤖 Actions: <label> · <label>` context line — the next steps the engine
+plans, with targets from the brain (e.g. `Hold payment — do not pay ·
+Escalate to Amara Osei`). A rule-clean message that still carries LLM
+advisories gets a softer `💡 Worth a check` reply instead — advisories are
+advisory only, never framed as violations; the ✅ reaction is only for
+truly clean messages (no advisories).
 
 ## 5. Simulated fallback (no Slack app needed)
 

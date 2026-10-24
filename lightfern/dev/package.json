@@ -1,0 +1,27 @@
+{
+  "name": "commitguard-lightfern-dev",
+  "private": true,
+  "type": "module",
+  "description": "Proof harness for the CommitGuard Lightfern app: manifest validation, tsc typecheck and a vitest that renders home.tsx against a fake ctx. node_modules is gitignored; the app itself has no build step.",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "harness": "node harness/build.mjs"
+  },
+  "dependencies": {
+    "@lightfern/plugin-sdk": "github:lightfern/plugin-sdk#c7638b2144b5e15657c0e03d34798d9bf748b416",
+    "react": "19.2.0",
+    "react-dom": "19.2.0"
+  },
+  "devDependencies": {
+    "@testing-library/dom": "^10.4.2",
+    "@testing-library/react": "^16.3.2",
+    "@types/node": "^26.6.5",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "esbuild": "^0.25.0",
+    "jsdom": "^27.0.0",
+    "typescript": "^5.9.0",
+    "vitest": "^4.0.0"
+  }
+}

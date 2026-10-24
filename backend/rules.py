@@ -485,6 +485,206 @@ def check_confidential_leak(text: str, brain: dict) -> list:
     return out
 
 
+# --- finance checks (Round track): spend tiers, invoice discipline, payment runs
+#
+# Amount parser handles £12k, £1.2m, £12,000, 12,000, 2,500 gbp, etc.
+_AMOUNT_RES = [
+    re.compile(r"[£$€]\s?(\d[\d,]*(?:\.\d+)?)\s*([kKmM])\b"),
+    re.compile(r"[£$€]\s?(\d[\d,]*(?:\.\d+)?)\b"),
+    re.compile(r"\b(\d[\d,]*(?:\.\d+)?)\s*([kKmM])\s*(?:gbp|pounds?|quid)?\b", re.I),
+    re.compile(r"\b(\d[\d,]*(?:\.\d+)?)\s*(?:gbp|pounds?|quid)\b", re.I),
+    re.compile(r"\b(\d{1,3}(?:,\d{3})+(?:\.\d+)?)\b"),
+]
+
+
+def gbp_amounts(text: str):
+    """Yield (match, float_value) for GBP-looking amounts in `text`."""
+    used = []
+    for pat in _AMOUNT_RES:
+        for m in pat.finditer(text):
+            if any(m.start() < e and s < m.end() for s, e in used):
+                continue  # overlapping a wider match already yielded
+            used.append((m.start(), m.end()))
+            groups = [g for g in m.groups() if g is not None]
+            mult = 1
+            if len(groups) > 1 and str(groups[-1]).lower() in ("k", "m"):
+                mult = 1_000 if groups[-1].lower() == "k" else 1_000_000
+            try:
+                yield m, float(str(groups[0]).replace(",", "")) * mult
+            except (ValueError, IndexError):
+                continue
+
+
+def spend_tier(amount: float, brain: dict):
+    """Return the approval tier for `amount` with approver names resolved.
+
+    None if the brain has no spend_approvals. 'self' tier means anyone may
+    approve — callers treat it as no escalation needed.
+    """
+    tiers = brain.get("finance", {}).get("spend_approvals", [])
+    people = brain.get("people", {})
+    for t in tiers:
+        limit = t.get("max_gbp")
+        if limit is None or amount <= limit:
+            roles = t.get("approvers", [])
+            return {"tier": t.get("tier"), "approver_roles": roles,
+                    "approvers": [people.get(r, r) for r in roles],
+                    "max_gbp": limit}
+    return None
+
+
+_SPEND_INTENT_RE = re.compile(
+    r"(?i)\b(approv\w*|sign\w*[ -]?off|budget\w*|spend\w*|wir(?:e|ed|ing)|"
+    r"transfer\w*|pay(?:ing|s)?\s+out|purchase order)\b")
+_TIER_SEVERITY = {"team_lead": "MEDIUM", "cfo": "HIGH", "exec": "CRITICAL"}
+
+
+def check_spend_tiers(text: str, brain: dict) -> list:
+    """Spend requests must name the right approver for their tier."""
+    if not _SPEND_INTENT_RE.search(text):
+        return []
+    best = None  # (amount, match, tier) for the largest amount found
+    for m, amt in gbp_amounts(text):
+        tier = spend_tier(amt, brain)
+        if tier and "self" not in tier["approver_roles"] and \
+                (best is None or amt > best[0]):
+            best = (amt, m, tier)
+    if not best:
+        return []
+    amt, m, tier = best
+    names = " + ".join(tier["approvers"])
+    cap = (f"£{tier['max_gbp']:,}" if tier["max_gbp"] is not None
+           else "any amount over the top tier")
+    return [_v(
+        "SPEND_OVER_LIMIT", _TIER_SEVERITY.get(tier["tier"], "HIGH"),
+        f"£{amt:,.0f} spend sits in the '{tier['tier']}' tier — needs "
+        f"sign-off from {names}.",
+        f"Route to {names} before committing the spend.",
+        {"brain_key": "finance.spend_approvals",
+         "expected": f"{tier['tier']} tier (up to {cap}) approved by "
+                     f"{names}",
+         "found": f"£{amt:,.0f}",
+         "required_approvers": tier["approvers"]},
+        span={"text": m.group(0), "start": m.start(), "end": m.end()},
+    )]
+
+
+_PAY_INTENT_RE = re.compile(
+    r"(?i)\b(pay|paying|paid|settle\w*|wir(?:e|ed|ing)|transfer\w*|remit\w*|"
+    r"send(?:ing|t)?|dispatch\w*|clear(?:ing)?)\b")
+_APPROVAL_WORD_RE = re.compile(
+    r"(?i)\b(approved|approves|approval|authorised|authorized|"
+    r"sign\w*[ -]?off|cleared by)\b")
+
+
+def check_unapproved_payment(text: str, brain: dict) -> list:
+    """Paying a payable invoice that's still unpaid/overdue needs sign-off."""
+    rules = brain.get("finance", {}).get("payment_rules", {})
+    if "no_unapproved_invoice_payments" not in rules or \
+            not _PAY_INTENT_RE.search(text) or _APPROVAL_WORD_RE.search(text):
+        return []
+    by_id = {i["id"]: i for i in brain.get("finance", {}).get("invoices", [])
+             if i.get("kind") == "payable" and
+             i.get("status") in ("unpaid", "overdue")}
+    out = []
+    seen = set()
+    for m in _INVOICE_NO_RE.finditer(text):
+        ref = m.group(0).replace(" ", "-")
+        inv = by_id.get(ref)
+        if not inv or ref in seen:
+            continue
+        seen.add(ref)
+        out.append(_v(
+            "UNAPPROVED_PAYMENT", "HIGH",
+            f"{ref} ({inv['counterparty']}, £{inv['amount_gbp']:,}) is "
+            f"{inv['status']} — paying it without approval breaks the "
+            "payment rules.",
+            f"Get sign-off in "
+            f"{brain.get('people', {}).get('finance_approval_channel', '#finance-approvals')} "
+            "before paying, or wait for the next payment run.",
+            {"brain_key": f"finance.invoices[{ref}].status",
+             "expected": "approved before payment",
+             "found": inv["status"],
+             "invoice_id": ref},
+            span={"text": m.group(0), "start": m.start(), "end": m.end()},
+        ))
+    return out
+
+
+_BANK_CHANGE_RE = re.compile(
+    r"(?i)\b(new|updated|changed|different)\s+(bank|payment|account)\s+"
+    r"(details|account|info|number)\b|\b(new|updated)\s+iban\b|"
+    r"\bchanged\s+(their|our|its|the)\s+bank\b")
+_VENDOR_CONTEXT_RE = re.compile(
+    r"(?i)\b(vendor|supplier|invoice|account|iban|pay\w*|wir\w*|transfer\w*|"
+    r"send\w*|remit\w*)\b")
+
+
+def check_new_vendor_bank(text: str, brain: dict) -> list:
+    """'Changed bank details' from a party with no signed contract = fraud."""
+    rules = brain.get("finance", {}).get("payment_rules", {})
+    if "no_payment_to_new_vendor_without_verified_bank" not in rules or \
+            _find_vendor(text, brain):
+        return []
+    m = _BANK_CHANGE_RE.search(text)
+    if not m or not _VENDOR_CONTEXT_RE.search(text):
+        return []
+    return [_v(
+        "NEW_VENDOR_BANK_CHANGE", "CRITICAL",
+        "Bank-detail change from a party with no signed contract — the "
+        "classic new-vendor fraud pattern.",
+        "Do not pay. Verify bank details out-of-band on a known number, "
+        "then escalate to "
+        f"{brain.get('people', {}).get('cfo', 'the CFO')}.",
+        {"brain_key": "finance.payment_rules."
+                      "no_payment_to_new_vendor_without_verified_bank",
+         "expected": "verified bank details before first payment",
+         "found": m.group(0)},
+        span={"text": m.group(0), "start": m.start(), "end": m.end()},
+    )]
+
+
+_DAY_RE = re.compile(
+    r"(?i)\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b")
+_SCHED_WORD_RE = re.compile(
+    r"(?i)\b(on|move[ds]?|push(?:ing|ed)?|batch(?:ing|ed)?|schedul\w+|"
+    r"delay(?:ed|ing)?|until|postpone\w*|deadline)\b")
+_PAYMENT_WORD_RE = re.compile(
+    r"(?i)\b(pay\w*|payment\w*|invoice\w*|wir\w*|transfer\w*|batch|"
+    r"supplier\w*|vendor\w*|remit\w*)\b")
+_DAY_NORMALISE = {"mon": "monday", "tue": "tuesday", "tues": "tuesday",
+                  "wed": "wednesday", "thu": "thursday", "thur": "thursday",
+                  "thurs": "thursday", "fri": "friday", "sat": "saturday",
+                  "sun": "sunday"}
+
+
+def check_payment_off_cycle(text: str, brain: dict) -> list:
+    """Supplier payments only run on the days in payment_run_days."""
+    run_days = brain.get("finance", {}).get("payment_rules", {}) \
+        .get("payment_run_days", [])
+    if not run_days or not _PAYMENT_WORD_RE.search(text):
+        return []
+    allowed = {_DAY_NORMALISE.get(d.lower()[:5], d.lower()) for d in run_days}
+    for m in _DAY_RE.finditer(text):
+        day = m.group(1).lower()
+        if day in allowed:
+            continue
+        lo, hi = max(0, m.start() - 60), min(len(text), m.end() + 60)
+        if not _SCHED_WORD_RE.search(text, lo, hi):
+            continue
+        return [_v(
+            "PAYMENT_OFF_CYCLE", "MEDIUM",
+            f"Payments scheduled on {m.group(1)} — payment runs only happen "
+            f"on {'/'.join(run_days)}.",
+            f"Hold it for the next payment run ({'/'.join(run_days)}) or get "
+            "CFO sign-off for an off-cycle payment.",
+            {"brain_key": "finance.payment_rules.payment_run_days",
+             "expected": "/".join(run_days), "found": m.group(1)},
+            span={"text": m.group(0), "start": m.start(), "end": m.end()},
+        )]
+    return []
+
+
 def check_learned_rules(text: str, brain: dict) -> list:
     out = []
     for rule in brain.get("learned_rules", []):
@@ -633,6 +833,10 @@ ALL_CHECKS = [
     check_expense_approval,
     check_price_floor,
     check_confidential_leak,
+    check_spend_tiers,
+    check_unapproved_payment,
+    check_new_vendor_bank,
+    check_payment_off_cycle,
     check_learned_rules,
 ]
 
@@ -656,6 +860,10 @@ CONTEXTS = {
     check_expense_approval: {"outgoing_email", "slack_message", "general"},
     check_price_floor: {"outgoing_email", "slack_message", "general"},
     check_confidential_leak: {"outgoing_email", "slack_message", "general"},
+    check_spend_tiers: {"outgoing_email", "slack_message", "general"},
+    check_payment_off_cycle: {"outgoing_email", "slack_message", "general"},
+    check_unapproved_payment: "ALL",
+    check_new_vendor_bank: "ALL",
 }
 
 
@@ -714,6 +922,72 @@ def explain_policy(question: str, brain: dict) -> dict:
                         ("learned_rules", learned))
         return _ans("No learned rules yet — humans can add them and they're "
                     "enforced immediately.", ("learned_rules", learned))
+
+    fin_section = brain.get("finance", {})
+    invoices = fin_section.get("invoices", [])
+    people_map = brain.get("people", {})
+
+    if "runway" in q or ("burn" in q and "rate" not in q):
+        bank = fin_section.get("bank", {})
+        bal, burn = bank.get("balance_gbp"), bank.get("monthly_burn_gbp")
+        if bal is not None and burn:
+            months = bal / burn
+            return _ans(f"£{bal:,.0f} in the bank ÷ £{burn:,.0f}/month burn "
+                        f"≈ {months:.1f} months of runway.",
+                        ("finance.bank.balance_gbp", bal),
+                        ("finance.bank.monthly_burn_gbp", burn))
+        return _ans("Bank balance and monthly burn aren't in the brain yet.",
+                    ("finance.bank", bank))
+
+    if "overdue" in q:
+        late = [i for i in invoices if i.get("status") == "overdue"]
+        if not late:
+            return _ans("No overdue invoices in the brain right now.",
+                        ("finance.invoices", invoices))
+        listing = "; ".join(
+            f"{i['id']} {i['counterparty']} £{i['amount_gbp']:,} "
+            f"{i['kind']} (was due {i['due_date']})" for i in late)
+        return _ans(f"Overdue: {listing}.", ("finance.invoices", late))
+
+    if any(k in q for k in ("due out", "due this month", "due next month",
+                            "what's due", "whats due", "going out",
+                            "payment run", "pay run", "when do we pay")):
+        run_days = fin_section.get("payment_rules", {}) \
+            .get("payment_run_days", [])
+        month = datetime.now(timezone.utc).strftime("%Y-%m")
+        due = [i for i in invoices
+               if i.get("kind") == "payable" and i.get("status") != "paid"
+               and str(i.get("due_date", "")).startswith(month)]
+        parts = [f"{i['id']} {i['counterparty']} £{i['amount_gbp']:,} "
+                 f"({i['status']}, due {i['due_date']})" for i in due]
+        answer = (f"Payables due {month}: " + "; ".join(parts) + "."
+                  if parts else f"No unpaid payables due in {month}.")
+        if run_days:
+            answer += f" Payment runs go out on {'/'.join(run_days)}."
+        return _ans(answer, ("finance.invoices", invoices),
+                    ("finance.payment_rules.payment_run_days", run_days))
+
+    if any(k in q for k in ("who approves", "who can approve", "approver",
+                            "approval tier", "spend over", "approve spend",
+                            "how much can i spend", "spending limit")):
+        tiers = fin_section.get("spend_approvals", [])
+        if not tiers:
+            return _ans("No spend-approval tiers in the brain yet.",
+                        ("finance.spend_approvals", tiers))
+        parts = []
+        prev = 0
+        for t in tiers:
+            names = " + ".join(people_map.get(r, r)
+                               for r in t.get("approvers", []))
+            cap = t.get("max_gbp")
+            band = (f"over £{prev:,}" if cap is None
+                    else f"£{prev:,}–£{cap:,}" if prev
+                    else f"up to £{cap:,}")
+            parts.append(f"{band}: {names}")
+            prev = cap or prev
+        return _ans("Spend approvals — " + "; ".join(parts) + ".",
+                    ("finance.spend_approvals", tiers),
+                    ("people", people_map))
 
     if any(k in q for k in ("bank", "iban", "sort code", "account number",
                             "payment details", "change of bank")):
@@ -917,4 +1191,41 @@ def policy_cards(brain: dict) -> list:
                       "brain_key": f"learned_rules[{r.get('id')}]",
                       "example_violation": f"Saying '{r.get('phrase')}' in a "
                                            "draft."})
+    fin_sec = brain.get("finance", {})
+    tiers = fin_sec.get("spend_approvals", [])
+    if tiers:
+        parts, prev = [], 0
+        for t in tiers:
+            names = " + ".join(people.get(r, r)
+                               for r in t.get("approvers", []))
+            cap = t.get("max_gbp")
+            parts.append((f"over £{prev:,}" if cap is None
+                          else f"£{prev:,}–£{cap:,}" if prev
+                          else f"up to £{cap:,}") + f": {names}")
+            prev = cap or prev
+        cards.append({"title": "Spend approvals",
+                      "rule": "Spend tiers — " + "; ".join(parts) + ".",
+                      "brain_key": "finance.spend_approvals",
+                      "example_violation": "Approving a £12k spend without "
+                                           "CFO sign-off."})
+    prules = fin_sec.get("payment_rules", {})
+    if prules.get("payment_run_days"):
+        days = "/".join(prules["payment_run_days"])
+        cards.append({"title": "Payment runs",
+                      "rule": f"Supplier payments go out on {days} only. "
+                              + prules.get("no_unapproved_invoice_payments", ""),
+                      "brain_key": "finance.payment_rules.payment_run_days",
+                      "example_violation": "Wiring an unpaid invoice on a "
+                                           "Friday."})
+    bank = fin_sec.get("bank", {})
+    if bank.get("balance_gbp") and bank.get("monthly_burn_gbp"):
+        months = bank["balance_gbp"] / bank["monthly_burn_gbp"]
+        cards.append({"title": "Runway",
+                      "rule": f"£{bank['balance_gbp']:,.0f} ÷ "
+                              f"£{bank['monthly_burn_gbp']:,.0f}/mo ≈ "
+                              f"{months:.1f} months runway (computed, "
+                              "never stored).",
+                      "brain_key": "finance.bank",
+                      "example_violation": "Committing spend that ignores "
+                                           "the runway."})
     return cards

@@ -21,13 +21,16 @@ SMOKE_PATH = ROOT / "backend" / "smoke_test.py"
 
 
 def _expected_map():
-    """Pull the SLACK_DEMO expected-category dict out of smoke_test.py."""
+    """Pull the SLACK_DEMO + FINANCE_DEMO expected-category dicts out of
+    smoke_test.py so expectations never drift."""
     tree = ast.parse(SMOKE_PATH.read_text())
+    merged = {}
     for node in tree.body:
         if isinstance(node, ast.Assign) and any(
-                getattr(t, "id", "") == "SLACK_DEMO" for t in node.targets):
-            return ast.literal_eval(node.value)
-    return {}
+                getattr(t, "id", "") in ("SLACK_DEMO", "FINANCE_DEMO")
+                for t in node.targets):
+            merged.update(ast.literal_eval(node.value))
+    return merged
 
 
 def _req(method, path, payload=None, timeout=5):
@@ -104,7 +107,8 @@ def main():
 
     print('-' * 60)
     for i, q in enumerate(["can I give a 20% discount?",
-                           "what is the expense approval limit?"], 1):
+                           "who approves spend over £5k?",
+                           "what's our runway?"], 1):
         code, res = _req("POST", "/ask", {"question": q})
         if code in (404, 405, 422):
             row(f"ask #{i}", "SKIP", f"http={code} (no /ask endpoint yet)")

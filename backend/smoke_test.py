@@ -27,7 +27,17 @@ SLACK_DEMO = {
     "slack_demo_clean": [],
 }
 
-EXPECTED = {**BASELINE, **SLACK_DEMO}
+# Finance/ops scenarios — 3 flagged, 3 clean (exact categories).
+FINANCE_DEMO = {
+    "fin_spend_approval": ["SPEND_OVER_LIMIT"],
+    "fin_vendor_bank": ["NEW_VENDOR_BANK_CHANGE"],
+    "fin_offcycle_unpaid": ["PAYMENT_OFF_CYCLE", "UNAPPROVED_PAYMENT"],
+    "fin_within_limit": [],
+    "fin_payment_run": [],
+    "fin_chase_receivable": [],
+}
+
+EXPECTED = {**BASELINE, **SLACK_DEMO, **FINANCE_DEMO}
 
 failures = []
 
@@ -195,6 +205,10 @@ for _name, _q, _want in [
     ("onboarding_clientlist", "can I send the client list to an investor?", True),
     ("onboarding_bank_change", "a vendor sent a change of bank details — "
                                "what do I do?", True),
+    ("onboarding_spend_tiers", "who approves spend over £5k?", True),
+    ("onboarding_due_month", "what's due out this month?", True),
+    ("onboarding_runway", "what's our runway?", True),
+    ("onboarding_overdue", "which invoices are overdue?", True),
     ("onboarding_unknown", "does the office have a coffee machine?", False),
 ]:
     _res = rules.explain_policy(_q, main.COMPANY_BRAIN)
@@ -281,6 +295,61 @@ for _name, _key, _must, _must_not, _target_check in [
     if not _ok:
         failures.append(f"{_name}: expected {sorted(_must)} actions, "
                         f"got {sorted(_types)}")
+
+# darsh/finance-brain: unit tests — the amount parser and approval tiers.
+_unit_ok = True
+for _t, _want in [
+    ("£12k", [12000]), ("£1.2m", [1200000]), ("£12,000", [12000]),
+    ("£500", [500]), ("£6,800", [6800]), ("12,000", [12000]),
+    ("2,500 gbp", [2500]), ("£48k/yr", [48000]), ("£4.5k", [4500]),
+    ("INV-1043", []), ("Thursday 3pm", []), ("Net-30", []),
+]:
+    _got = sorted(v for _m, v in rules.gbp_amounts(_t))
+    if _got != sorted(_want):
+        _unit_ok = False
+        failures.append(f"unit_parser {_t!r}: expected {_want}, got {_got}")
+print(f"\n=== unit_amount_parser: {'PASS' if _unit_ok else 'FAIL'}")
+
+_tier_ok = True
+for _amt, _want_tier, _want_names in [
+    (500, "self", ["self"]),
+    (3000, "team_lead", ["Nadia Hussain"]),
+    (12000, "cfo", ["Amara Osei"]),
+    (60000, "exec", ["Amara Osei", "Tom Ellery"]),
+]:
+    _tier = rules.spend_tier(_amt, main.COMPANY_BRAIN)
+    _got = (_tier["tier"], _tier["approvers"]) if _tier else (None, None)
+    if _got != (_want_tier, _want_names):
+        _tier_ok = False
+        failures.append(f"unit_tier {_amt}: expected "
+                        f"{(_want_tier, _want_names)}, got {_got}")
+print(f"=== unit_approval_tiers: {'PASS' if _tier_ok else 'FAIL'}")
+
+# darsh/finance-brain: plan_actions on the finance violations.
+for _name, _key, _must, _target_type, _want_target in [
+    ("actions_fin_spend", "fin_spend_approval",
+     {"REQUEST_APPROVAL"}, "REQUEST_APPROVAL",
+     main.COMPANY_BRAIN["people"]["cfo"]),
+    ("actions_fin_unpaid", "fin_offcycle_unpaid",
+     {"HOLD_PAYMENT", "REQUEST_APPROVAL"}, "HOLD_PAYMENT", "INV-1043"),
+    ("actions_fin_bank", "fin_vendor_bank",
+     {"HOLD_PAYMENT", "ESCALATE", "VERIFY_VENDOR"}, "ESCALATE",
+     main.COMPANY_BRAIN["people"]["cfo"]),
+]:
+    _sc = main.SCENARIOS[_key]
+    _out = main.verify_context(main.VerifyRequest(
+        text=_sc["text"], context_type=_sc["context_type"]))
+    _plan = actions.plan_actions(_out, main.COMPANY_BRAIN)
+    _types = {a["type"] for a in _plan}
+    _ok = _must <= _types and any(
+        a["type"] == _target_type and a["target"] == _want_target
+        for a in _plan)
+    print(f"\n=== {_name}: {'PASS' if _ok else 'FAIL'}")
+    for a in _plan:
+        print(f"  {a['type']}: {a['label']} (target={a['target']})")
+    if not _ok:
+        failures.append(f"{_name}: expected {sorted(_must)} with "
+                        f"{_target_type}->{_want_target}, got {sorted(_types)}")
 
 if failures:
     print("\nFAILURES:")

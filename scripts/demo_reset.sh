@@ -94,6 +94,26 @@ print("brain: learned_rules + learned_exceptions reset to []")
 PY
 [ $? -ne 0 ] && exit 1
 
+uv run python - <<'PY'
+from pathlib import Path
+
+log = Path("brain_changelog.jsonl")
+props = Path("brain_proposals.json")
+try:
+    import brain_store
+    res = brain_store.revert_all()  # restores patched values + empties changelog
+    print(f"brain: reverted patches {res.get('reverted') or 'none'}")
+except Exception as e:
+    print(f"brain: revert skipped ({type(e).__name__}: {e})")
+for p in (log, props):
+    try:
+        p.unlink()
+        print(f"{p.name} cleared")
+    except FileNotFoundError:
+        pass
+PY
+[ $? -ne 0 ] && exit 1
+
 rm -f feed_log.jsonl
 echo "feed_log.jsonl cleared"
 

@@ -77,6 +77,7 @@ Text for each is in `backend/scenarios.json` (also shown by `GET /scenarios`).
 | `? can I give a 20% discount?` | 💡 thread: the answer + `Source: <brain_key> = <value>` per citation | feed item `kind: "question"` + `FEED_ASK` audit row |
 | reply `missed: <phrase>` in a warning thread | 📚 "Learned: …" — the phrase is a rule now | `learned_rules` entry + `FEED_OVERRIDE` row |
 | reply `fine` in a warning thread | 📚 "Learned: …" — a `learned_exceptions` entry suppresses that category for the phrase | same |
+| `CFO: from today payment terms are Net-45` | 📋 thread: pending brain-patch proposal card — reply `apply` or `reject` in the thread | feed item carries `proposal`/`proposal_id` (`GET /brain/proposals`); `apply` flips the earlier flagged Net-45 draft's verdict to clean |
 
 Questions — `?…`, `ask:…`, or any `@CommitGuard` mention — are answered from
 the brain, never run through the rules engine, and count under `questions`
@@ -97,6 +98,28 @@ Escalate to Darsh`). A rule-clean message that still carries LLM
 advisories gets a softer `💡 Worth a check` reply instead — advisories are
 advisory only, never framed as violations; the ✅ reaction is only for
 truly clean messages (no advisories).
+
+Brain proposals — a feed message that reads as an authoritative decision
+(`CFO: from today payment terms are Net-45`) creates a pending brain-patch
+proposal — never auto-applied — posted into the message's thread as a Block
+Kit card. Reply `apply`/`reject` in the thread (same loop guards as
+`missed:`/`fine`) or call `POST /brain/proposals/{id}/apply|reject`; browse
+them via `GET /brain/proposals?status=pending`. Applying writes the patch
+through `brain_store` (atomic, logged in `GET /brain/changelog`), reloads
+the brain, and re-verifies the affected feed items — so the earlier Net-45
+draft that was flagged against the Net-30 rule visibly flips to clean.
+
+Invoice audit — `incoming_invoice` texts and invoice-ish Slack messages
+(vendor, invoice no, or IBAN + amount present) also run
+`backend/audit_trace.py` on top of the rules engine, which can add
+`INVOICE_OVER_CONTRACT` (HIGH — fires on any overage; evidence carries
+`delta_gbp`), `BANK_DETAILS_MISMATCH` (CRITICAL), `HIDDEN_CLAUSE` (HIGH),
+`DUPLICATE_INVOICE` (CRITICAL), and `TERMS_MISMATCH` (MEDIUM) violations,
+deduped per category/`brain_key` so baseline verdicts never double-count.
+Push an invoice through the feed with `POST /feed/inject` plus
+`"context_type": "incoming_invoice"`; follow-up execute-action types
+`HOLD_PAYMENT`, `VERIFY_VENDOR`, `REQUEST_CREDIT_NOTE`, `REQUEST_APPROVAL`
+handle the response.
 
 ## 5. Simulated fallback (no Slack app needed)
 

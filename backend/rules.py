@@ -14,6 +14,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+try:
+    import brain_store  # single writer for company_brain.json
+except ImportError:  # brain_store phase may not have merged yet — degrade
+    brain_store = None
+
 BASE_DIR = Path(__file__).parent
 BRAIN_PATH = BASE_DIR / "company_brain.json"
 
@@ -720,15 +725,50 @@ LEARNED_SEVERITIES = {"MEDIUM", "HIGH", "CRITICAL"}
 
 
 def _write_brain(brain: dict, brain_path: Path) -> None:
-    """Atomically rewrite company_brain.json (temp file + os.replace)."""
+    """Atomically rewrite company_brain.json — delegates to brain_store so
+    every brain write goes through one place (learned rules + exceptions
+    included). Falls back to the inline atomic write while brain_store
+    has not merged yet."""
+    if brain_store is not None:
+        brain_store.write_brain(brain, brain_path)
+        return
     fd, tmp = tempfile.mkstemp(dir=brain_path.parent, suffix=".tmp")
     try:
         with os.fdopen(fd, "w") as f:
-            f.write(json.dumps(brain, indent=2) + "\n")
+            f.write(json.dumps(brain, indent=2, ensure_ascii=False) + "\n")
         os.replace(tmp, brain_path)
     except BaseException:
         os.unlink(tmp)
         raise
+
+
+def _notify_brain_change(brain_key, old, new, meta=None):
+    """Fan a learned-write through brain_store's on_change hooks — fail open."""
+    try:
+        for fn in (getattr(brain_store, "_on_change", None)
+                   or getattr(brain_store, "_ON_CHANGE_HOOKS", [])):
+            try:
+                fn(brain_key, old, new, meta or {})
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+
+def _mutate_brain(fn, brain_path):
+    """fn(brain) -> (result, changed, hook_args) — through brain_store's lock
+    so a learned write can't clobber a concurrent apply_patch. Inline
+    fallback while brain_store hasn't merged (no lock then, same semantics)."""
+    brain_path = Path(brain_path)
+    if brain_store is not None:
+        return brain_store.mutate_brain(fn, brain_path)
+    brain = json.loads(brain_path.read_text())
+    result, changed, hook_args = fn(brain)
+    if changed:
+        _write_brain(brain, brain_path)
+    if hook_args:
+        _notify_brain_change(*hook_args)
+    return result
 
 
 def add_learned_rule(rule: dict, brain_path=BRAIN_PATH) -> dict:
@@ -746,29 +786,31 @@ def add_learned_rule(rule: dict, brain_path=BRAIN_PATH) -> dict:
     if severity not in LEARNED_SEVERITIES:
         raise ValueError(f"severity must be one of {sorted(LEARNED_SEVERITIES)}")
 
-    brain_path = Path(brain_path)
-    brain = json.loads(brain_path.read_text())
-    learned = brain.setdefault("learned_rules", [])
-    for existing in learned:
-        if isinstance(existing, dict) and \
-                str(existing.get("phrase", "")).lower() == phrase.lower():
-            return existing
+    def _mut(brain):
+        learned = brain.setdefault("learned_rules", [])
+        for existing in learned:
+            if isinstance(existing, dict) and \
+                    str(existing.get("phrase", "")).lower() == phrase.lower():
+                return existing, False, None
+        stored = {
+            "id": "lr_" + uuid.uuid4().hex[:8],
+            "phrase": phrase,
+            "category": rule.get("category") or "LEARNED_RULE",
+            "severity": severity,
+            "issue": rule.get("issue")
+                or f"Message contains learned-rule phrase '{phrase}'.",
+            "correction": rule.get("correction")
+                or "Remove the phrase or get explicit approval before sending.",
+            "created_ts": datetime.now(timezone.utc).isoformat(),
+        }
+        if rule.get("source_feed_id"):
+            stored["source_feed_id"] = rule["source_feed_id"]
+        learned.append(stored)
+        return stored, True, (
+            "learned_rules", learned[:-1], learned,
+            {"source": "learned_rule", "rule_id": stored["id"]})
 
-    stored = {
-        "id": "lr_" + uuid.uuid4().hex[:8],
-        "phrase": phrase,
-        "category": rule.get("category") or "LEARNED_RULE",
-        "severity": severity,
-        "issue": rule.get("issue") or f"Message contains learned-rule phrase '{phrase}'.",
-        "correction": rule.get("correction")
-            or "Remove the phrase or get explicit approval before sending.",
-        "created_ts": datetime.now(timezone.utc).isoformat(),
-    }
-    if rule.get("source_feed_id"):
-        stored["source_feed_id"] = rule["source_feed_id"]
-    learned.append(stored)
-    _write_brain(brain, brain_path)
-    return stored
+    return _mutate_brain(_mut, brain_path)
 
 
 def add_learned_exception(rule: dict, brain_path=BRAIN_PATH) -> dict:
@@ -788,28 +830,30 @@ def add_learned_exception(rule: dict, brain_path=BRAIN_PATH) -> dict:
         raise ValueError("learned exception 'category' is required")
     category = category.strip()
 
-    brain_path = Path(brain_path)
-    brain = json.loads(brain_path.read_text())
-    exceptions = brain.setdefault("learned_exceptions", [])
-    for existing in exceptions:
-        if isinstance(existing, dict) and \
-                str(existing.get("phrase", "")).lower() == phrase.lower() and \
-                existing.get("category") == category:
-            return existing
+    def _mut(brain):
+        exceptions = brain.setdefault("learned_exceptions", [])
+        for existing in exceptions:
+            if isinstance(existing, dict) and \
+                    str(existing.get("phrase", "")).lower() == \
+                    phrase.lower() and \
+                    existing.get("category") == category:
+                return existing, False, None
+        stored = {
+            "id": "le_" + uuid.uuid4().hex[:8],
+            "phrase": phrase,
+            "category": category,
+            "created_ts": datetime.now(timezone.utc).isoformat(),
+        }
+        if rule.get("note"):
+            stored["note"] = rule["note"]
+        if rule.get("source_feed_id"):
+            stored["source_feed_id"] = rule["source_feed_id"]
+        exceptions.append(stored)
+        return stored, True, (
+            "learned_exceptions", exceptions[:-1], exceptions,
+            {"source": "learned_exception", "exception_id": stored["id"]})
 
-    stored = {
-        "id": "le_" + uuid.uuid4().hex[:8],
-        "phrase": phrase,
-        "category": category,
-        "created_ts": datetime.now(timezone.utc).isoformat(),
-    }
-    if rule.get("note"):
-        stored["note"] = rule["note"]
-    if rule.get("source_feed_id"):
-        stored["source_feed_id"] = rule["source_feed_id"]
-    exceptions.append(stored)
-    _write_brain(brain, brain_path)
-    return stored
+    return _mutate_brain(_mut, brain_path)
 
 
 def _apply_exceptions(text: str, violations: list, brain: dict) -> list:

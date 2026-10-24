@@ -4,12 +4,22 @@
     "domain": "roundtreasury.io",
     "hq": "London",
     "currency": "GBP",
-    "customers": ["Acme Corp", "Globex", "Initech", "Umbrella Group", "Soylent Ltd"]
+    "customers": [
+      "Acme Corp",
+      "Globex",
+      "Initech",
+      "Umbrella Group",
+      "Soylent Ltd"
+    ]
   },
   "internal_policies": {
     "expense_approval_limit_gbp": 5000,
     "expense_approval_note": "Any spend over £5,000 needs CFO approval first.",
-    "pricing_floor_gbp_per_seat": {"Starter": 40, "Growth": 65, "Enterprise": 110},
+    "pricing_floor_gbp_per_seat": {
+      "Starter": 40,
+      "Growth": 65,
+      "Enterprise": 110
+    },
     "confidential_data": "No customer names + revenue figures in public channels; never share the client list externally."
   },
   "financial_rules": {
@@ -25,19 +35,51 @@
       "vendor_name": "CloudScale Ltd",
       "approved_monthly_retainer_gbp": 5000,
       "hourly_rate_gbp": 70,
-      "bank_iban": "GB29REVOLUT12345689"
+      "bank_iban": "GB29REVOLUT12345689",
+      "payment_terms": "Net-30",
+      "bank_sort_code": "20-11-33",
+      "bank_account_no": "44556677",
+      "contact_phone": "+44 20 7946 0101"
     },
     {
       "vendor_name": "Northwind Analytics",
       "approved_monthly_retainer_gbp": 3200,
       "hourly_rate_gbp": 95,
-      "bank_iban": "GB14MONODE87654321"
+      "bank_iban": "GB14MONODE87654321",
+      "payment_terms": "Net-30",
+      "bank_sort_code": "30-22-44",
+      "bank_account_no": "55667788",
+      "contact_phone": "+44 20 7946 0102"
     },
     {
       "vendor_name": "Meridian Security Ltd",
       "approved_monthly_retainer_gbp": 4200,
       "hourly_rate_gbp": 80,
-      "bank_iban": "GB77NWBK11223344"
+      "bank_iban": "GB77NWBK11223344",
+      "payment_terms": "Net-30",
+      "bank_sort_code": "40-33-55",
+      "bank_account_no": "66778899",
+      "contact_phone": "+44 20 7946 0103"
+    },
+    {
+      "vendor_name": "Pinnacle Print & Design",
+      "approved_monthly_retainer_gbp": 1800,
+      "hourly_rate_gbp": 55,
+      "bank_iban": "GB33LOYD22334455",
+      "payment_terms": "Net-30",
+      "bank_sort_code": "30-00-11",
+      "bank_account_no": "22334455",
+      "contact_phone": "+44 20 7946 0331"
+    },
+    {
+      "vendor_name": "DataFort Backup Ltd",
+      "approved_monthly_retainer_gbp": 2600,
+      "hourly_rate_gbp": 60,
+      "bank_iban": "GB88HSBC55667788",
+      "payment_terms": "Net-30",
+      "bank_sort_code": "40-22-33",
+      "bank_account_no": "55667788",
+      "contact_phone": "+44 20 7946 0332"
     }
   ],
   "engineering_status": [
@@ -74,25 +116,34 @@
       {
         "tier": "self",
         "max_gbp": 1000,
-        "approvers": ["self"],
+        "approvers": [
+          "self"
+        ],
         "note": "anyone may spend up to £1,000 without extra sign-off"
       },
       {
         "tier": "team_lead",
         "max_gbp": 5000,
-        "approvers": ["team_lead"],
+        "approvers": [
+          "team_lead"
+        ],
         "note": "spend of £1,000–£5,000 needs the team lead"
       },
       {
         "tier": "cfo",
         "max_gbp": 25000,
-        "approvers": ["cfo"],
+        "approvers": [
+          "cfo"
+        ],
         "note": "spend of £5,000–£25,000 needs the CFO"
       },
       {
         "tier": "exec",
         "max_gbp": null,
-        "approvers": ["cfo", "ceo"],
+        "approvers": [
+          "cfo",
+          "ceo"
+        ],
         "note": "spend over £25,000 needs CFO + CEO sign-off"
       }
     ],
@@ -117,10 +168,18 @@
     "payment_rules": {
       "no_payment_to_new_vendor_without_verified_bank": "Never pay a new vendor until bank details are verified out-of-band.",
       "no_unapproved_invoice_payments": "Only invoices marked approved may be paid; unpaid or overdue invoices need sign-off first.",
-      "payment_run_days": ["Tuesday", "Thursday"]
+      "payment_run_days": [
+        "Tuesday",
+        "Thursday"
+      ]
     }
   },
-  "known_sender_domains": ["cloudscale.co.uk", "northwind-analytics.com", "yourcompany.com", "meridian-sec.com"],
+  "known_sender_domains": [
+    "cloudscale.co.uk",
+    "northwind-analytics.com",
+    "yourcompany.com",
+    "meridian-sec.com"
+  ],
   "learned_rules": [],
   "learned_exceptions": []
 }

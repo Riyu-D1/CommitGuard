@@ -2,6 +2,8 @@
 
 Every action writes an audit line to audit_log.jsonl. STAGE_INVOICE also
 appends to round_staging_queue.json (the mock Round Treasury pickup queue).
+HOLD_PAYMENT, VERIFY_VENDOR, REQUEST_CREDIT_NOTE and REQUEST_APPROVAL handle
+the AuditTrace invoice-interceptor flow.
 """
 
 import json
@@ -16,11 +18,13 @@ BASE = Path(__file__).parent
 AUDIT_PATH = BASE / "audit_log.jsonl"
 STAGING_PATH = BASE / "round_staging_queue.json"
 
-DEDUPE_ACTION_TYPES = {"STAGE_INVOICE", "ESCALATE_FRAUD"}
+DEDUPE_ACTION_TYPES = {"STAGE_INVOICE", "ESCALATE_FRAUD", "HOLD_PAYMENT"}
 DEDUPE_WINDOW = timedelta(minutes=10)
 
 VALID_ACTION_TYPES = {"SEND_APPROVED", "APPLY_REWRITE_AND_LOG", "APPROVE_OVERRIDE",
-                      "STAGE_INVOICE", "ESCALATE_FRAUD"}
+                      "STAGE_INVOICE", "ESCALATE_FRAUD", "HOLD_PAYMENT",
+                      "VERIFY_VENDOR", "REQUEST_CREDIT_NOTE",
+                      "REQUEST_APPROVAL"}
 
 
 def audit(entry: dict) -> dict:
@@ -133,9 +137,95 @@ def execute_action(action_type: str, payload: dict, brain: dict) -> dict:
         return {"success": True, "audit_log_id": entry["audit_log_id"],
                 "message": f"Escalated to {brain.get('people', {}).get('cfo', 'CFO')} - payment blocked pending out-of-band verification."}
 
+    if action_type == "HOLD_PAYMENT":
+        held = f" on {payload['invoice']}" if payload.get("invoice") else ""
+        entry = audit({"action_type": action_type, "payload": payload,
+                       "result": "payment_held"})
+        return {"success": True, "audit_log_id": entry["audit_log_id"],
+                "message": f"Payment held{held} — do not pay until the "
+                           "vendor is verified out-of-band."}
+
+    if action_type == "VERIFY_VENDOR":
+        vendor = payload.get("vendor")
+        phone = payload.get("phone_on_file")
+        if vendor and phone:
+            msg = (f"Verify {vendor} on {phone} — the number on file, "
+                   "never the email.")
+        elif vendor:
+            msg = f"Verify {vendor} on the number on file — never the email."
+        elif phone:
+            msg = (f"Verify the vendor on {phone} — the number on file, "
+                   "never the email.")
+        else:
+            msg = "Verify the vendor on the number on file — never the email."
+        entry = audit({"action_type": action_type, "payload": payload,
+                       "result": "vendor_verification_requested"})
+        return {"success": True, "audit_log_id": entry["audit_log_id"],
+                "message": msg}
+
+    if action_type == "REQUEST_CREDIT_NOTE":
+        delta = payload.get("delta_gbp")
+        vendor = payload.get("vendor")
+        amount = f"£{delta:g}" if isinstance(delta, (int, float)) else None
+        if amount and vendor:
+            msg = f"Credit note drafted for {amount} overage to {vendor}."
+        elif amount:
+            msg = f"Credit note drafted for {amount} overage."
+        elif vendor:
+            msg = f"Credit note drafted for the overage to {vendor}."
+        else:
+            msg = "Credit note drafted for the overage."
+        entry = audit({"action_type": action_type, "payload": payload,
+                       "result": "credit_note_drafted"})
+        return {"success": True, "audit_log_id": entry["audit_log_id"],
+                "message": msg}
+
+    if action_type == "REQUEST_APPROVAL":
+        entry = audit({"action_type": action_type, "payload": payload,
+                       "result": "approval_requested"})
+        return {"success": True, "audit_log_id": entry["audit_log_id"],
+                "message": "Approval requested from "
+                           f"{payload.get('target') or 'the approver'} — "
+                           "holding until sign-off."}
+
     entry = audit({"action_type": action_type, "payload": payload, "result": "ok"})
     return {"success": True, "audit_log_id": entry["audit_log_id"],
             "message": f"Processed {action_type} and wrote it to the audit trail."}
+
+
+def _evidence_value(violations: list, key: str):
+    """First non-None evidence[key] across violations, else None."""
+    for v in violations:
+        ev = v.get("evidence")
+        if isinstance(ev, dict) and ev.get(key) is not None:
+            return ev[key]
+    return None
+
+
+def _evidence_vendor(violations: list):
+    """Vendor named by a violation — an evidence.vendor extra, else parsed
+    out of a `signed_contracts[Name].*` brain_key."""
+    vendor = _evidence_value(violations, "vendor")
+    if vendor:
+        return vendor
+    for v in violations:
+        ev = v.get("evidence")
+        if isinstance(ev, dict):
+            m = re.match(r"signed_contracts\[(.+?)\]",
+                         str(ev.get("brain_key", "")))
+            if m:
+                return m.group(1)
+    return None
+
+
+def _contract_phone(brain: dict, vendor):
+    """contact_phone for `vendor` from signed_contracts — the number on file."""
+    if not vendor:
+        return None
+    for c in brain.get("signed_contracts", []):
+        if isinstance(c, dict) and c.get("vendor_name") == vendor:
+            return c.get("contact_phone")
+    return None
 
 
 def _days_overdue(inv: dict, today: date) -> int:
@@ -195,12 +285,15 @@ def plan_actions(result: dict, brain: dict, text: str = None) -> list:
          and v["evidence"].get("required_approvers")), None)
 
     hold_cats = {"PAYMENT_REDIRECTION", "URGENT_PAYMENT_CHANGE",
-                 "UNAPPROVED_PAYMENT", "NEW_VENDOR_BANK_CHANGE"}
+                 "UNAPPROVED_PAYMENT", "NEW_VENDOR_BANK_CHANGE",
+                 "BANK_DETAILS_MISMATCH", "DUPLICATE_INVOICE"}
     if (crit_cats & hold_cats) or (cats & {"UNAPPROVED_PAYMENT",
-                                         "NEW_VENDOR_BANK_CHANGE"}):
+                                         "NEW_VENDOR_BANK_CHANGE",
+                                         "DUPLICATE_INVOICE"}):
         hold_payload = {"violations": violations}
         if invoice_refs:
             hold_payload["invoices"] = invoice_refs
+            hold_payload["invoice"] = invoice_refs[0]  # dedupe key
         plan["HOLD_PAYMENT"] = {"type": "HOLD_PAYMENT",
                                 "label": "Hold payment — do not pay",
                                 "target": invoice_refs[0] if invoice_refs
@@ -213,12 +306,29 @@ def plan_actions(result: dict, brain: dict, text: str = None) -> list:
                             "payload": {"violations": violations}}
 
     if cats & {"PAYMENT_REDIRECTION", "URGENT_PAYMENT_CHANGE",
-               "NEW_VENDOR_BANK_CHANGE"}:
+               "NEW_VENDOR_BANK_CHANGE", "BANK_DETAILS_MISMATCH",
+               "DUPLICATE_INVOICE"}:
+        vendor = _evidence_vendor(violations)
+        if not vendor and invoice_refs:
+            ledger = {i.get("id"): i for i in
+                      brain.get("finance", {}).get("invoices", [])
+                      if isinstance(i, dict)}
+            vendor = next((ledger[r]["counterparty"] for r in invoice_refs
+                           if r in ledger and ledger[r].get("counterparty")),
+                          None)
+        payload = {"violations": violations}
+        if vendor:
+            payload["vendor"] = vendor
+        phone = (_evidence_value(violations, "phone_on_file")
+                 or _contract_phone(brain, vendor))
+        if phone:
+            payload["phone_on_file"] = phone
         plan["VERIFY_VENDOR"] = {
             "type": "VERIFY_VENDOR",
-            "label": "Verify vendor bank details out-of-band",
-            "target": None,
-            "payload": {"violations": violations}}
+            "label": (f"Verify {vendor} on the number on file — never the email"
+                      if vendor else "Verify vendor bank details out-of-band"),
+            "target": vendor,
+            "payload": payload}
 
     if cats & {"APPROVAL_REQUIRED", "SPEND_OVER_LIMIT",
                "UNAPPROVED_PAYMENT", "PAYMENT_OFF_CYCLE"}:
@@ -232,6 +342,52 @@ def plan_actions(result: dict, brain: dict, text: str = None) -> list:
             "label": label,
             "target": target,
             "payload": {"violations": violations}}
+
+    if "INVOICE_OVER_CONTRACT" in cats:
+        if "HOLD_PAYMENT" not in plan:
+            hold_payload = {"violations": violations}
+            if invoice_refs:
+                hold_payload["invoices"] = invoice_refs
+                hold_payload["invoice"] = invoice_refs[0]
+            plan["HOLD_PAYMENT"] = {"type": "HOLD_PAYMENT",
+                                    "label": "Hold payment — do not pay",
+                                    "target": invoice_refs[0] if invoice_refs
+                                    else None,
+                                    "payload": hold_payload}
+        delta = _evidence_value(violations, "delta_gbp")
+        if delta is None:
+            delta = _evidence_value(violations, "delta_gbp_per_hr")
+        vendor = _evidence_vendor(violations)
+        label = (f"Request credit note for £{delta:g} overage"
+                 if isinstance(delta, (int, float))
+                 else "Request credit note for the overage")
+        plan["REQUEST_CREDIT_NOTE"] = {
+            "type": "REQUEST_CREDIT_NOTE",
+            "label": label,
+            "target": vendor,
+            "payload": {"delta_gbp": delta, "vendor": vendor,
+                        "violations": violations}}
+
+    if (cats & {"INVOICE_OVER_CONTRACT", "HIDDEN_CLAUSE",
+               "TERMS_MISMATCH"}) and "REQUEST_APPROVAL" not in plan:
+        import rules  # lazy — keeps actions.py importable without rules
+        amount = max((v["evidence"]["amount_gbp"] for v in violations
+                      if isinstance(v.get("evidence"), dict)
+                      and isinstance(v["evidence"].get("amount_gbp"),
+                                     (int, float))), default=None)
+        tier = rules.spend_tier(amount, brain) if amount is not None else None
+        approvers = None
+        if tier and "self" not in tier.get("approver_roles", []):
+            approvers = " + ".join(tier.get("approvers") or [])
+        channel = people.get("finance_approval_channel")
+        target = approvers or channel
+        plan["REQUEST_APPROVAL"] = {
+            "type": "REQUEST_APPROVAL",
+            "label": (f"Request approval from {approvers}" if approvers
+                      else f"Request approval in {channel}" if channel
+                      else "Request approval"),
+            "target": target,
+            "payload": {"violations": violations, "target": target}}
 
     if "CONFIDENTIAL_LEAK" in cats:
         plan["BLOCK_AND_REDACT"] = {

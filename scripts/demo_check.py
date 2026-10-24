@@ -120,6 +120,50 @@ def main():
         else:
             row(f"ask #{i}", "FAIL", f"http={code}")
 
+    # riyansh/chaser — receivables + chase draft (read-only: log/paid writes
+    # are covered by backend/test_chaser.py on a temp brain).
+    print('-' * 60)
+    code, rep = _req("GET", "/receivables")
+    if code == 404:
+        row("GET /receivables", "SKIP", "endpoint not implemented")
+    elif code == 200 and isinstance(rep, dict) and \
+            isinstance(rep.get("items"), list) and rep.get("items"):
+        b = rep.get("buckets", {})
+        row("GET /receivables", "PASS",
+            f"£{rep.get('total_outstanding_gbp', 0):,} open · "
+            f"overdue buckets {json.dumps({k: v.get('count') for k, v in b.items()})[:60]}")
+    else:
+        row("GET /receivables", "FAIL", f"http={code}")
+
+    code, d = _req("POST", "/chase", {"invoice_id": "INV-1048"})
+    if code == 404:
+        row("POST /chase", "SKIP", "endpoint not implemented")
+    elif code == 200 and isinstance(d, dict) and d.get("subject") \
+            and d.get("body") and d.get("tone"):
+        row("POST /chase", "PASS",
+            f"{d.get('tone')} · {d.get('days_overdue')}d · "
+            f"engine={d.get('engine')} · draft_only={d.get('draft_only')}")
+    else:
+        row("POST /chase", "FAIL", f"http={code} {str(d)[:60]}")
+
+    code, h = _req("GET", "/chase/INV-1048/history")
+    if code == 404:
+        row("GET /chase/history", "SKIP", "endpoint not implemented")
+    elif code == 200 and isinstance(h, dict) and "chase_log" in h:
+        row("GET /chase/history", "PASS",
+            f"{len(h['chase_log'])} entries for {h.get('invoice_id')}")
+    else:
+        row("GET /chase/history", "FAIL", f"http={code}")
+
+    code, q = _req("POST", "/ask", {"question": "who owes us money"})
+    if code in (404, 405):
+        row("ask who-owes", "SKIP", f"http={code}")
+    elif code == 200 and isinstance(q, dict) and q.get("matched") \
+            and "outstanding" in str(q.get("answer")):
+        row("ask who-owes", "PASS", str(q["answer"])[:70])
+    else:
+        row("ask who-owes", "FAIL", f"http={code} {str(q)[:60]}")
+
     print('-' * 60)
     fails = rows.count("FAIL")
     print(f"{len(rows)} checks: {rows.count('PASS')} PASS · "

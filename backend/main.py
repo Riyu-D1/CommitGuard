@@ -1,4 +1,5 @@
 import json
+import re
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -16,6 +17,7 @@ import rules
 import actions
 import slack_feed
 import lightfern_bridge
+import chaser
 from llm_enrich import llm_enrich, llm_enabled, llm_polish_answer
 
 from rules import explain_policy, policy_cards
@@ -33,7 +35,9 @@ async def lifespan(_app):
         "import_brain": _import_brain,
     })
     slack_feed.start(verify_fn=_verify, scenarios=SCENARIOS,
-                     ask_fn=_ask_brain, override_fn=_slack_override)
+                     ask_fn=_ask_brain, override_fn=_slack_override,
+                     chase_fn=_chase_draft, chase_command_fn=_chase_cmd)
+    slack_feed.add_feed_listener(_chase_signal)
     yield
     lightfern_bridge.stop()
 
@@ -161,7 +165,7 @@ def _verify(text: str, context_type: str) -> dict:
             "rules_ms": rules_ms,
         },
     }
-    result["actions"] = actions.plan_actions(result, COMPANY_BRAIN)
+    result["actions"] = actions.plan_actions(result, COMPANY_BRAIN, text=text)
     return result
 
 
@@ -200,12 +204,24 @@ def verify_batch(req: VerifyBatchRequest):
     return {"results": results}
 
 
+_OWES_RE = re.compile(
+    r"(?i)\b(who\s+owes|owe[sd]?\s+us|owed|what'?s\s+overdue|whats\s+overdue|"
+    r"overdue\s+receiv|receivables?|outstanding\s+(invoices?|money)|"
+    r"who\s+hasn'?t\s+paid|haven'?t\s+paid)\b")
+
+
 def _ask_brain(question: str) -> dict:
     """Shared ask-the-brain logic for POST /ask and Slack questions.
     Deterministic first; if OPENAI_API_KEY is set the answer is rephrased
-    in friendlier words (sources untouched), failing open."""
+    in friendlier words (sources untouched), failing open.
+
+    Receivables questions ('who owes us money', 'what's overdue') are
+    answered by the chaser's ageing summary — same response shape."""
     t0 = time.time()
-    out = explain_policy(question, COMPANY_BRAIN)
+    if _OWES_RE.search(question or ""):
+        out = chaser.ask_summary(COMPANY_BRAIN)
+    else:
+        out = explain_policy(question, COMPANY_BRAIN)
     engine = "rules"
     if out.get("matched"):
         polished = llm_polish_answer(question, out["answer"])
@@ -559,6 +575,147 @@ def inspector():
     if not path.exists():
         raise HTTPException(404, {"error": "inspector.html not built yet"})
     return FileResponse(path)
+
+
+# ---- invoice chaser (receivables) -------------------------------------------
+
+
+def _chase_draft(ref: str) -> dict:
+    """Shared draft logic for POST /chase and the Slack 'chase X' command.
+    The draft cites invoice/amount/due date/days overdue + prior promises;
+    context comes from the live feed. DRAFT ONLY — nothing is sent."""
+    return chaser.draft_chase(COMPANY_BRAIN, ref,
+                              feed_items=slack_feed.get_feed(limit=200))
+
+
+def _chase_cmd(ref, cmd):
+    """slack_feed thread-command hook for chase drafts ('log'/'paid').
+    Returns (payload, error_message) like _slack_override."""
+    global COMPANY_BRAIN
+    if not ref:
+        return None, "no invoice on this chase thread"
+    try:
+        if cmd == "paid":
+            res = chaser.mark_paid(ref, note="marked paid from Slack thread")
+        else:
+            res = chaser.log_chase(ref, channel="slack")
+    except Exception as e:
+        return None, str(e)
+    if res is None:
+        return None, f"no open receivable matching '{ref}'"
+    _reload_brain_after_chase()
+    if cmd == "paid":
+        return {"kind": "paid", "invoice_id": res["invoice_id"]}, None
+    return {"kind": "log", "invoice_id": ref, "entry": res}, None
+
+
+def _chase_signal(item: dict) -> None:
+    """Feed listener — 'Acme paid INV-1043' / 'Acme will pay Friday' style
+    messages update the receivable in the brain (atomic write)."""
+    global COMPANY_BRAIN
+    try:
+        updates = chaser.record_signal(COMPANY_BRAIN, item.get("text") or "",
+                                       source=item.get("source") or "feed",
+                                       brain_path=BRAIN_PATH)
+        if updates:
+            new_brain = load_brain()
+            if new_brain:
+                COMPANY_BRAIN = new_brain
+            lightfern_bridge.export_brain(brain=COMPANY_BRAIN)
+    except Exception:
+        pass
+
+
+def _reload_brain_after_chase() -> None:
+    global COMPANY_BRAIN
+    new_brain = load_brain()
+    if new_brain:
+        COMPANY_BRAIN = new_brain
+    try:
+        lightfern_bridge.export_brain(brain=COMPANY_BRAIN)
+    except Exception:
+        pass
+
+
+class ChaseRequest(BaseModel):
+    invoice_id: Optional[str] = None
+    customer: Optional[str] = None
+
+
+class ChaseNoteRequest(BaseModel):
+    note: Optional[str] = None
+
+
+@app.get("/receivables",
+         summary="Who owes us money — receivables ageing",
+         description="Open receivables from finance.invoices with days "
+                     "overdue, ageing bucket (current / 1-30 / 31-60 / 60+), "
+                     "prior chase count, last recorded promise, and bucket + "
+                     "total sums. Paid invoices drop out automatically.")
+def get_receivables():
+    return chaser.ageing(COMPANY_BRAIN)
+
+
+@app.post("/chase",
+          summary="Draft a payment chase for an invoice or customer",
+          description="{invoice_id} or {customer} -> a DRAFT chase email on "
+                      "the tone ladder (friendly reminder -> firm -> final "
+                      "notice escalating to the CFO). Cites invoice no, "
+                      "amount, due date, days overdue and any prior promise; "
+                      "uses OpenAI when OPENAI_API_KEY is set and a "
+                      "deterministic template otherwise. Never sends.")
+def chase(req: ChaseRequest):
+    ref = req.invoice_id or req.customer
+    if not ref or not str(ref).strip():
+        return JSONResponse(status_code=422,
+                            content={"error": "invoice_id or customer is required"})
+    res = _chase_draft(str(ref))
+    if res.get("error"):
+        return JSONResponse(status_code=404, content={"error": res["error"]})
+    return res
+
+
+@app.post("/chase/{invoice_id}/log",
+          summary="Mark a drafted chase as sent",
+          description="Appends a 'chase' entry to the invoice's chase_log in "
+                      "the brain (atomic write) — the next draft counts it "
+                      "toward the tone ladder.")
+def chase_log(invoice_id: str, req: ChaseNoteRequest):
+    entry = chaser.log_chase(invoice_id, note=(req.note if req else None),
+                             channel="api")
+    if entry is None:
+        return JSONResponse(status_code=404,
+                            content={"error": f"no open receivable matching '{invoice_id}'"})
+    _reload_brain_after_chase()
+    return JSONResponse(status_code=201, content={
+        "logged": True, "invoice_id": invoice_id, "entry": entry})
+
+
+@app.post("/chase/{invoice_id}/paid",
+          summary="Mark a receivable as paid",
+          description="Sets the invoice status to paid (it drops out of "
+                      "/receivables) and appends a 'paid' row to chase_log. "
+                      "The previous status is kept in chase_paid_from.")
+def chase_paid(invoice_id: str, req: ChaseNoteRequest):
+    res = chaser.mark_paid(invoice_id, note=(req.note if req else None))
+    if res is None:
+        return JSONResponse(status_code=404,
+                            content={"error": f"no open receivable matching '{invoice_id}'"})
+    _reload_brain_after_chase()
+    return {"paid": True, "invoice_id": res["invoice_id"],
+            "from_status": res["from_status"], "entry": res["entry"]}
+
+
+@app.get("/chase/{invoice_id}/history",
+         summary="Chase history for an invoice",
+         description="The invoice's chase_log — every chase sent, promise "
+                     "recorded and paid event, oldest first.")
+def chase_history(invoice_id: str):
+    res = chaser.history(COMPANY_BRAIN, invoice_id)
+    if res is None:
+        return JSONResponse(status_code=404,
+                            content={"error": f"no receivable matching '{invoice_id}'"})
+    return res
 
 
 @app.get("/",

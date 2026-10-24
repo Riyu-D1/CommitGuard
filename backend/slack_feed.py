@@ -32,6 +32,7 @@ once every 5s.
 import json
 import logging
 import os
+import re
 import ssl
 import threading
 import time
@@ -99,6 +100,8 @@ _started = False
 _bot_user_id = None  # from auth.test — our own messages are always ignored
 _ask = None          # injected by main — same logic as POST /ask
 _override = None     # injected by main — same logic as POST /feed/{id}/override
+_chase = None        # injected by main — same logic as POST /chase
+_chase_command = None  # injected by main — thread 'log'/'paid' on a chase
 _cmd_threads = []    # threads the bot replied in (thread commands)
 _last_cmd_scan = 0.0
 CMD_SCAN_SECONDS = 5
@@ -141,9 +144,21 @@ def _parse_question(text):
     return None
 
 
-def start(verify_fn, scenarios, ask_fn=None, override_fn=None) -> None:
+_CHASE_CMD_RE = re.compile(r"(?i)^\s*chase[:\s]+(.+?)\s*$")
+
+
+def _parse_chase(text):
+    """'chase INV-1048' / 'chase Acme' (case-insensitive) -> the invoice or
+    customer ref to draft a chase for; otherwise None."""
+    m = _CHASE_CMD_RE.match(text or "")
+    return m.group(1) if m else None
+
+
+def start(verify_fn, scenarios, ask_fn=None, override_fn=None,
+          chase_fn=None, chase_command_fn=None) -> None:
     """Called once from main's lifespan. Non-blocking: spawns a daemon thread."""
     global _verify, _scenarios, _started, _last_ts, _ask, _override
+    global _chase, _chase_command
     if _started:
         return
     _started = True
@@ -151,6 +166,8 @@ def start(verify_fn, scenarios, ask_fn=None, override_fn=None) -> None:
     _scenarios = list(scenarios.items())
     _ask = ask_fn
     _override = override_fn
+    _chase = chase_fn
+    _chase_command = chase_command_fn
     if MODE == "slack":
         _last_ts = str(time.time())  # tail -f: only messages posted after startup
         threading.Thread(target=_slack_loop, daemon=True, name="cg-slack-poll").start()
@@ -170,9 +187,34 @@ def _push(text, source, user=None, channel=None,
     item — unless it's a question (?/ask:/@bot), which is answered from the
     brain instead of checked."""
     global _next_id
-    question = (_parse_question(text)
-                if source in ("slack", "manual") and _ask is not None else None)
-    if question is not None:
+    chase_ref = (_parse_chase(text)
+                 if source in ("slack", "manual") and _chase is not None
+                 else None)
+    if chase_ref is not None:
+        try:
+            res = _chase(chase_ref)
+        except Exception as e:
+            res = {"error": f"chase failed: {e}"}
+        item = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "kind": "chase",
+            "source": source,
+            "channel": channel,
+            "user": user,
+            "text": text,
+            "context_type": context_type,
+            "status": "CHASE",
+            "risk_level": "LOW",
+            "violations": [],
+            "chase": res,
+            "suggested_rewrite": None,
+            "advisories": [],
+            "actions": [],
+            "meta": {"engine": res.get("engine", "rules")},
+        }
+    elif (_parse_question(text) if source in ("slack", "manual")
+          and _ask is not None else None) is not None:
+        question = _parse_question(text)
         res = _ask(question)
         item = {
             "ts": datetime.now(timezone.utc).isoformat(),
@@ -232,6 +274,20 @@ def _push(text, source, user=None, channel=None,
 
 def _audit(item: dict) -> None:
     try:
+        if item.get("kind") == "chase":
+            d = item.get("chase") or {}
+            actions.audit({
+                "action_type": "CHASE_DRAFT",
+                "payload": {
+                    "source": item["source"], "channel": item["channel"],
+                    "user": item["user"], "text": item["text"],
+                    "invoice_id": d.get("invoice_id"),
+                    "customer": d.get("customer"), "tone": d.get("tone"),
+                    "days_overdue": d.get("days_overdue"),
+                },
+                "result": "error" if d.get("error") else "drafted",
+            })
+            return
         if item.get("kind") == "question":
             actions.audit({
                 "action_type": "FEED_ASK",
@@ -458,12 +514,15 @@ def _post_question_reply(item: dict) -> None:
 
 def _track_thread(item: dict, data: dict) -> None:
     """Remember a thread the bot posted in so the reply scanner picks up
-    'missed: <phrase>' / 'fine' commands under it."""
+    'missed: <phrase>' / 'fine' commands under it (or 'log' / 'paid' under
+    a chase-draft thread)."""
     if not data.get("ok"):
         return
     _cmd_threads.append({"channel": item["channel"],
                          "thread_ts": item["slack_ts"],
                          "feed_id": item.get("id"),
+                         "kind": item.get("kind"),
+                         "chase_ref": (item.get("chase") or {}).get("invoice_id"),
                          "posted": time.time(),
                          "seen": {item["slack_ts"]}})
 
@@ -484,6 +543,21 @@ def _post_advisory_reply(item: dict) -> None:
     data = _slack_request("chat.postMessage", payload={
         "channel": item["channel"], "thread_ts": item["slack_ts"],
         "text": "💡 Worth a check", "blocks": build_advisory_blocks(item)})
+    if not data.get("ok"):
+        log.warning("chat.postMessage failed: %s", data.get("error"))
+    _track_thread(item, data)
+
+
+def _post_chase_reply(item: dict) -> None:
+    """Threaded Block Kit reply for a 'chase X' command — the draft, its
+    evidence cites, and the log/paid close-out instructions."""
+    import chaser  # lazy: keeps slack_feed importable without the chaser deps
+    d = item.get("chase") or {}
+    fallback = (f"📨 Chase draft — {d.get('invoice_id')} · {d.get('customer')}"
+                if not d.get("error") else "⚠️ Chase failed")
+    data = _slack_request("chat.postMessage", payload={
+        "channel": item["channel"], "thread_ts": item["slack_ts"],
+        "text": fallback, "blocks": chaser.build_chase_blocks(item)})
     if not data.get("ok"):
         log.warning("chat.postMessage failed: %s", data.get("error"))
     _track_thread(item, data)
@@ -515,6 +589,8 @@ def _maybe_reply(item: dict) -> None:
     try:
         if item.get("kind") == "question":
             _post_question_reply(item)
+        elif item.get("kind") == "chase":
+            _post_chase_reply(item)
         elif item["status"] == "VIOLATION_DETECTED" and item["violations"]:
             _post_reply(item)
         elif item.get("advisories"):
@@ -563,6 +639,37 @@ def _post_learned_reply(th: dict, payload: dict, err) -> None:
         log.warning("learned reply failed: %s", e)
 
 
+def _parse_chase_thread_command(text):
+    """Inside a chase-draft thread: 'log'/'sent' marks the chase sent,
+    'paid' marks the invoice paid."""
+    t = (text or "").strip().lower().rstrip(".!")
+    if t in ("log", "sent", "logged"):
+        return "log"
+    if t in ("paid", "they paid", "payment received"):
+        return "paid"
+    return None
+
+
+def _post_chase_cmd_reply(th: dict, payload: dict, err) -> None:
+    """Confirmation posted into a chase thread after 'log' / 'paid'."""
+    if err:
+        text = f"⚠️ Couldn't update the chase: {err}"
+    elif (payload or {}).get("kind") == "paid":
+        text = (f"✅ {payload.get('invoice_id')} marked paid — it's off the "
+                "overdue list.")
+    else:
+        text = (f"📨 Chase logged for {payload.get('invoice_id', 'the invoice')}"
+                " — the next draft counts it.")
+    try:
+        data = _slack_request("chat.postMessage", payload={
+            "channel": th["channel"], "thread_ts": th["thread_ts"],
+            "text": text})
+        if not data.get("ok"):
+            log.warning("chase cmd reply failed: %s", data.get("error"))
+    except Exception as e:
+        log.warning("chase cmd reply failed: %s", e)
+
+
 def _scan_thread_commands() -> None:
     """Poll conversations.replies on threads the bot posted in during the
     last 30 min, at most once every CMD_SCAN_SECONDS. Bot/subtype/own
@@ -598,6 +705,13 @@ def _scan_thread_commands() -> None:
             th["seen"].add(ts)
             if m.get("subtype") or m.get("bot_id") or \
                     (_bot_user_id and m.get("user") == _bot_user_id):
+                continue
+            if th.get("kind") == "chase" and _chase_command is not None:
+                ccmd = _parse_chase_thread_command(m.get("text"))
+                if not ccmd:
+                    continue
+                payload, err = _chase_command(th.get("chase_ref"), ccmd)
+                _post_chase_cmd_reply(th, payload, err)
                 continue
             cmd = _parse_thread_command(m.get("text"))
             if not cmd:

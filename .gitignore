@@ -7,3 +7,4 @@ round_staging_queue.json
 feed_log.jsonl
 .env
 .DS_Store
+.design-refs/

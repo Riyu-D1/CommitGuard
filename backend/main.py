@@ -1,5 +1,7 @@
 import json
+import os
 import re
+import tempfile
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -8,7 +10,7 @@ from typing import List, Optional
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -21,6 +23,7 @@ import brain_store
 import audit_trace
 import lightfern_bridge
 import chaser
+import treasury
 import close
 from llm_enrich import llm_enrich, llm_enabled, llm_polish_answer
 
@@ -29,21 +32,34 @@ from rules import explain_policy, policy_cards
 BASE = Path(__file__).parent
 BRAIN_PATH = BASE / "company_brain.json"
 
+PREVIEW_DIR = BASE / ".lightfern_preview"
+
+
 @asynccontextmanager
 async def lifespan(_app):
-    lightfern_bridge.start(hooks={
+    hooks = {
         "learn": _learn,
         "exception": _learn_exception,
         "override": _apply_override,
         "ask": _ask_brain,
         "import_brain": _import_brain,
-    })
+    }
+    if not lightfern_bridge.start(hooks=hooks):
+        # LIGHTFERN_APP_DIR unset — run the same bridge against a gitignored
+        # runtime copy so the /lightfern browser preview shows real live
+        # data (feed.json, status.json, inbox commands + answers).
+        try:
+            PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
+            lightfern_bridge.start(hooks=hooks, app_dir=str(PREVIEW_DIR))
+        except Exception:
+            pass
     slack_feed.start(verify_fn=_verify, scenarios=SCENARIOS,
                      ask_fn=_ask_brain, override_fn=_slack_override,
                      decision_fn=_decision_for_item,
                      proposal_fn=_proposal_decision,
                      chase_fn=_chase_draft, chase_command_fn=_chase_cmd)
     slack_feed.add_feed_listener(_chase_signal)
+    slack_feed.add_feed_listener(_treasury_signal)
     yield
     lightfern_bridge.stop()
 
@@ -282,6 +298,11 @@ _OWES_RE = re.compile(
     r"overdue\s+receiv|receivables?|outstanding\s+(invoices?|money)|"
     r"who\s+hasn'?t\s+paid|haven'?t\s+paid)\b")
 
+_TREASURY_RE = re.compile(
+    r"(?i)\b(ready\s+to\s+pay|payment\s+queue|treasury\s+queue|"
+    r"round\s+treasury|what'?s\s+payable|payments?\s+(queued|pending|"
+    r"waiting|held))\b")
+
 
 def _ask_brain(question: str) -> dict:
     """Shared ask-the-brain logic for POST /ask and Slack questions.
@@ -289,10 +310,13 @@ def _ask_brain(question: str) -> dict:
     in friendlier words (sources untouched), failing open.
 
     Receivables questions ('who owes us money', 'what's overdue') are
-    answered by the chaser's ageing summary — same response shape."""
+    answered by the chaser's ageing summary — same response shape.
+    'What's ready to pay' is answered by the Round Treasury queue."""
     t0 = time.time()
     if _OWES_RE.search(question or ""):
         out = chaser.ask_summary(COMPANY_BRAIN)
+    elif _TREASURY_RE.search(question or ""):
+        out = treasury.ask_summary(COMPANY_BRAIN)
     else:
         out = (close.ask(question, COMPANY_BRAIN)
                or explain_policy(question, COMPANY_BRAIN))
@@ -678,6 +702,118 @@ def lightfern_status():
     return lightfern_bridge.status()
 
 
+# ---- Lightfern browser preview ---------------------------------------------
+# The desktop app's home.tsx runs unchanged in a browser: the host shim calls
+# these endpoints instead of the Lightfern sandbox file API. All file access
+# is confined to the bridge's app dir (LIGHTFERN_APP_DIR, else the gitignored
+# backend/.lightfern_preview/ started in lifespan).
+
+LF_APP_SRC = BASE.parent / "lightfern" / "CommitGuard Brain"
+
+
+def _lf_root() -> Path:
+    st = lightfern_bridge.status()
+    if not st.get("enabled") or not st.get("app_dir"):
+        raise HTTPException(404, {"error": "lightfern preview not enabled"})
+    return Path(st["app_dir"]).resolve()
+
+
+def _lf_resolve(rel: str) -> Path:
+    """Resolve rel inside the app dir; 400 on absolute paths / '..'
+    traversal, resolved-path check catches symlink escapes."""
+    root = _lf_root()
+    if not rel or rel.startswith("/") or rel.startswith("\\"):
+        raise HTTPException(400, {"error": "path must be relative"})
+    parts = [p for p in rel.replace("\\", "/").split("/") if p]
+    if any(p == ".." for p in parts):
+        raise HTTPException(400, {"error": "path traversal rejected"})
+    dest = (root.joinpath(*parts)).resolve()
+    if root != dest and root not in dest.parents:
+        raise HTTPException(400, {"error": "path escapes app dir"})
+    return dest
+
+
+@app.get("/lightfern",
+         summary="Lightfern app — browser preview",
+         description="Serves demo/lightfern.html: the real home.tsx bundled "
+                     "for the browser, talking to this backend via the "
+                     "/lightfern/files proxy instead of the desktop sandbox.")
+def lightfern_preview():
+    path = BASE.parent / "demo" / "lightfern.html"
+    if not path.exists():
+        raise HTTPException(404, {"error": "lightfern.html not found"})
+    return FileResponse(path)
+
+
+@app.get("/lightfern/bundle.js", include_in_schema=False)
+def lightfern_bundle():
+    path = BASE.parent / "demo" / "lightfern-bundle.js"
+    if not path.exists():
+        raise HTTPException(404, {"error": "bundle not built — run "
+                                "lightfern/dev/harness/build-preview.mjs"})
+    return FileResponse(path, media_type="text/javascript")
+
+
+@app.get("/lightfern/styles.css", include_in_schema=False)
+def lightfern_styles():
+    path = LF_APP_SRC / "code" / "styles.css"
+    if not path.exists():
+        raise HTTPException(404, {"error": "styles.css not found"})
+    return FileResponse(path)
+
+
+@app.get("/lightfern/files/{path:path}",
+         summary="Read a file (or list a dir with ?list=1) in the app dir",
+         description="ctx.files.read/list backing for the browser preview. "
+                     "Confined to the bridge app dir — '..' and absolute "
+                     "paths return 400.")
+def lightfern_file_read(path: str, list: bool = False):
+    dest = _lf_resolve(path)
+    if list or dest.is_dir():
+        if not dest.is_dir():
+            raise HTTPException(404, {"error": f"no such dir: {path}"})
+        entries = [
+            {"path": f"{path.strip('/')}/{c.name}" if path.strip("/")
+                     else c.name,
+             "name": c.name,
+             "kind": "folder" if c.is_dir() else "file"}
+            for c in sorted(dest.iterdir(), key=lambda c: c.name)
+            if not c.name.startswith(".")
+        ]
+        return entries
+    if not dest.is_file():
+        raise HTTPException(404, {"error": f"no such file: {path}"})
+    return PlainTextResponse(dest.read_text(errors="replace"))
+
+
+class _FileWrite(BaseModel):
+    content: str
+
+
+@app.post("/lightfern/files/{path:path}",
+          summary="Write a file inside the app dir",
+          description="ctx.files.write backing for the browser preview — "
+                      "inbox command files land here and the bridge drains "
+                      "them exactly like in the desktop app.")
+def lightfern_file_write(path: str, req: _FileWrite):
+    dest = _lf_resolve(path)
+    if dest.is_dir():
+        raise HTTPException(400, {"error": f"is a directory: {path}"})
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=dest.parent, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(req.content)
+        os.replace(tmp, dest)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    return {"ok": True, "path": path}
+
+
 @app.get("/slack/status",
          summary="Slack monitor mode and health",
          description="Returns {mode: 'slack' | 'simulated', channel, "
@@ -756,6 +892,55 @@ def _chase_signal(item: dict) -> None:
             lightfern_bridge.export_brain(brain=COMPANY_BRAIN)
     except Exception:
         pass
+
+
+def _treasury_signal(item: dict) -> None:
+    """Feed listener — checked incoming invoices land in the Round Treasury
+    queue (ready to stage vs held). Fail-open like every listener."""
+    try:
+        treasury.ingest_feed_item(item, COMPANY_BRAIN)
+    except Exception:
+        pass
+
+
+class TreasuryActionRequest(BaseModel):
+    name: Optional[str] = None
+
+
+@app.get("/treasury/queue",
+         summary="Round Treasury payment queue — ready vs held invoices",
+         description="Every checked incoming invoice, sorted by the action "
+                     "plan: no hold-type action -> ready to stage with "
+                     "amount/payee/due date/tier approver; HOLD_PAYMENT, "
+                     "VERIFY_VENDOR or ESCALATE -> held with the reason and "
+                     "cited brain_key. Sample data — no money ever moves.")
+def treasury_queue():
+    return treasury.list_queue()
+
+
+@app.post("/treasury/{qid}/approve",
+          summary="Mark a queued invoice approved (still no payment)",
+          description="Records approved_by + approved_at on a ready item. "
+                      "Held items must be released first. Nothing is paid — "
+                      "the label always says sample data, no money moves.")
+def treasury_approve(qid: str, req: TreasuryActionRequest):
+    entry, err = treasury.approve(qid, req.name or "api")
+    if err:
+        code = 404 if "not found" in err else 409
+        return JSONResponse(status_code=code, content={"error": err})
+    return entry
+
+
+@app.post("/treasury/{qid}/release-hold",
+          summary="Release a held invoice back to ready",
+          description="Clears the hold — the original violation reason stays "
+                      "on the record for audit.")
+def treasury_release(qid: str, req: TreasuryActionRequest):
+    entry, err = treasury.release_hold(qid, req.name or "api")
+    if err:
+        code = 404 if "not found" in err else 409
+        return JSONResponse(status_code=code, content={"error": err})
+    return entry
 
 
 def _reload_brain_after_chase() -> None:

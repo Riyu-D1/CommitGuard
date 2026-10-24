@@ -4,6 +4,7 @@ __pycache__/
 server.log
 audit_log.jsonl
 round_staging_queue.json
+treasury_queue.json
 feed_log.jsonl
 brain_proposals.json
 brain_changelog.jsonl
@@ -14,6 +15,9 @@ brain_changelog.jsonl
 # Lightfern dev harness — proof-only package, never shipped inside the app
 lightfern/dev/node_modules/
 lightfern/dev/harness/bundle.js
+
+# Browser-preview runtime copy of the Lightfern app dir (bridge writes here)
+backend/.lightfern_preview/
 .playwright-mcp/
 
 # Lightfern runtime artifacts (the bridge writes these at runtime)

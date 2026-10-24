@@ -1,0 +1,56 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CommitGuard Brain — Lightfern app (browser preview)</title>
+    <link rel="stylesheet" href="/lightfern/styles.css" />
+    <style>
+      html, body { margin: 0; height: 100%; background: #0a0a0b; }
+      body {
+        display: flex; flex-direction: column;
+        font-family: -apple-system, "SF Pro Text", Helvetica, sans-serif;
+      }
+      .lf-chrome {
+        display: flex; align-items: center; gap: 12px;
+        padding: 0 14px; height: 44px; flex: none;
+        background: #141416; border-bottom: 1px solid #232326;
+      }
+      .lf-lights { display: flex; gap: 7px; }
+      .lf-lights i {
+        width: 11px; height: 11px; border-radius: 50%; display: block;
+      }
+      .lf-lights i:nth-child(1) { background: #ff5f57; }
+      .lf-lights i:nth-child(2) { background: #febc2e; }
+      .lf-lights i:nth-child(3) { background: #28c840; }
+      .lf-title {
+        font-size: 12px; font-weight: 600; color: #d7d7db;
+        letter-spacing: 0.02em;
+      }
+      .lf-title small { color: #71717a; font-weight: 400; }
+      .lf-note {
+        margin-left: auto; text-align: right;
+        font-size: 10px; color: #8a8a93; line-height: 1.35; max-width: 46%;
+      }
+      .lf-body { flex: 1; min-height: 0; overflow: auto; }
+      .lf-body #root { min-height: 100%; }
+    </style>
+  </head>
+  <body>
+    <div class="lf-chrome">
+      <div class="lf-lights"><i></i><i></i><i></i></div>
+      <div class="lf-title">
+        CommitGuard Brain <small>— Lightfern app (browser preview)</small>
+      </div>
+      <div class="lf-note">
+        Same home.tsx and manifest as the Lightfern app, running in a browser
+        via the plugin SDK host shim. Files proxy to this backend — every
+        check, inbox command and answer is real.
+      </div>
+    </div>
+    <div class="lf-body">
+      <div id="root"></div>
+    </div>
+    <script type="module" src="/lightfern/bundle.js"></script>
+  </body>
+</html>

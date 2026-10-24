@@ -23,5 +23,35 @@
     "label": "Slack — urgent bank change",
     "context_type": "slack_message",
     "text": "@finance URGENT: CloudScale just sent over new bank details — can someone update payment details today? New IBAN GB22BARC99887766554, has to be done before close or Friday's payment run fails."
+  },
+  "slack_demo_price_floor": {
+    "label": "Slack demo — under-floor quote",
+    "context_type": "slack_message",
+    "text": "quick check — told Acme Corp we can do Enterprise at £85/seat if they sign Friday, that's fine right?"
+  },
+  "slack_demo_expense": {
+    "label": "Slack demo — expense over limit",
+    "context_type": "slack_message",
+    "text": "expensing the £6,800 monitoring tool — putting it on the company card this afternoon, too small to bug Amara right?"
+  },
+  "slack_demo_rev_leak": {
+    "label": "Slack demo — revenue leak",
+    "context_type": "slack_message",
+    "text": "for the churn thread: Acme Corp was paying £48k/yr and Globex is at £31k ARR — numbers above for context"
+  },
+  "slack_demo_clientlist": {
+    "label": "Slack demo — client list share",
+    "context_type": "slack_message",
+    "text": "the investor asked for refs — gonna send them our client list + the Acme Corp contract so they can choose"
+  },
+  "slack_demo_spend_seats": {
+    "label": "Slack demo — seat price + spend",
+    "context_type": "slack_message",
+    "text": "for the new pilot I quoted £50/seat on Growth and told them I'd expense the £9,000 onboarding myself"
+  },
+  "slack_demo_clean": {
+    "label": "Slack demo — clean chatter",
+    "context_type": "slack_message",
+    "text": "fyi the retro moved to Thursday 3pm, usual room — agenda's in the doc"
   }
 }

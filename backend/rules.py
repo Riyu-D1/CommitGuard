@@ -384,6 +384,107 @@ def check_unverified_claims(text: str, brain: dict) -> list:
     return out
 
 
+_EXPENSE_WORDS = re.compile(
+    r"(?i)\b(expens\w*|spend(?:s|ing|t)?|buy(?:ing)?|purchas\w*|"
+    r"company card|corporate card|pay(?:ing)? for)\b")
+
+
+def check_expense_approval(text: str, brain: dict) -> list:
+    limit = brain.get("internal_policies", {}).get("expense_approval_limit_gbp")
+    if limit is None or not _EXPENSE_WORDS.search(text):
+        return []
+    for m, amt in _money_amounts(text):
+        if amt > limit:
+            return [_v(
+                "APPROVAL_REQUIRED", "HIGH",
+                f"£{amt:,.0f} of spend needs CFO approval — over the "
+                f"£{limit:,} expense limit.",
+                f"Get {brain.get('people', {}).get('cfo', 'the CFO')} to "
+                "approve the spend first.",
+                {"brain_key": "internal_policies.expense_approval_limit_gbp",
+                 "expected": f"<= £{limit:,} unapproved", "found": amt},
+                span={"text": m.group(0), "start": m.start(), "end": m.end()},
+            )]
+    return []
+
+
+_SEAT_PRICE_RE = re.compile(r"(?i)[£$€]?\s?(\d+(?:\.\d+)?)\s*(?:/|per)\s*seat")
+
+
+def check_price_floor(text: str, brain: dict) -> list:
+    plans = brain.get("internal_policies", {}) \
+        .get("pricing_floor_gbp_per_seat", {})
+    if not plans:
+        return []
+    out = []
+    for m in _SEAT_PRICE_RE.finditer(text):
+        price = float(m.group(1))
+        plan = next((p for p in plans
+                     if re.search(rf"(?i)\b{re.escape(p)}\b", text)), None)
+        floor = plans.get(plan, min(plans.values()))
+        if price < floor:
+            out.append(_v(
+                "PRICE_FLOOR", "HIGH",
+                f"£{price:g}/seat is below the £{floor}/seat floor"
+                + (f" for the {plan} plan." if plan else
+                   f" (lowest plan floor is {min(plans, key=plans.get)})."),
+                f"Don't quote below £{floor}/seat — reprice or get "
+                "sales-lead sign-off.",
+                {"brain_key": "internal_policies.pricing_floor_gbp_per_seat",
+                 "expected": f">= £{floor}/seat", "found": f"£{price:g}/seat"},
+                span={"text": m.group(0), "start": m.start(), "end": m.end()},
+            ))
+    return out
+
+
+_CLIENT_LIST_RE = re.compile(r"(?i)\b(?:client|customer)s?\s+list\b")
+_EXFIL_VERB_RE = re.compile(
+    r"(?i)\b(send|share|export|upload|email|forward|attach|drop|paste)\b")
+
+
+def check_confidential_leak(text: str, brain: dict) -> list:
+    policies = brain.get("internal_policies", {})
+    if "confidential_data" not in policies:
+        return []
+    out = []
+    customers = brain.get("company", {}).get("customers", [])
+    name_m = next((re.search(rf"(?i)\b{re.escape(c)}\b", text)
+                   for c in customers
+                   if re.search(rf"(?i)\b{re.escape(c)}\b", text)), None)
+    if name_m:
+        for m, _amt in _money_amounts(text):
+            out.append(_v(
+                "CONFIDENTIAL_LEAK", "HIGH",
+                f"'{name_m.group(0)}' next to a revenue figure — customer "
+                "financials don't belong in this message.",
+                "Move customer figures to a private channel or strip "
+                "the numbers.",
+                {"brain_key": "internal_policies.confidential_data",
+                 "expected": "no customer name + revenue figures in one "
+                             "message",
+                 "found": f"{name_m.group(0)} + {m.group(0)}"},
+                span={"text": name_m.group(0),
+                      "start": name_m.start(), "end": name_m.end()},
+            ))
+            break
+    list_m = _CLIENT_LIST_RE.search(text)
+    verb_m = _EXFIL_VERB_RE.search(text)
+    if list_m and verb_m:
+        out.append(_v(
+            "CONFIDENTIAL_LEAK", "CRITICAL",
+            "Sharing the client list outside the company is a data "
+            "exfiltration risk.",
+            "Never send the client list externally — escalate to the CFO "
+            "instead.",
+            {"brain_key": "internal_policies.confidential_data",
+             "expected": "client list stays internal",
+             "found": f"{verb_m.group(0)} + {list_m.group(0)}"},
+            span={"text": list_m.group(0),
+                  "start": list_m.start(), "end": list_m.end()},
+        ))
+    return out
+
+
 def check_learned_rules(text: str, brain: dict) -> list:
     out = []
     for rule in brain.get("learned_rules", []):
@@ -471,6 +572,9 @@ ALL_CHECKS = [
     check_sender_domain,
     check_urgent_payment_change,
     check_unverified_claims,
+    check_expense_approval,
+    check_price_floor,
+    check_confidential_leak,
     check_learned_rules,
 ]
 
@@ -491,6 +595,9 @@ CONTEXTS = {
     check_refund_credits: {"outgoing_email", "slack_message", "general"},
     check_large_commitment: {"outgoing_email", "slack_message", "general"},
     check_unverified_claims: {"outgoing_email", "slack_message", "general"},
+    check_expense_approval: {"outgoing_email", "slack_message", "general"},
+    check_price_floor: {"outgoing_email", "slack_message", "general"},
+    check_confidential_leak: {"outgoing_email", "slack_message", "general"},
 }
 
 

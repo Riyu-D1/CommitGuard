@@ -1,152 +1,133 @@
-# Riyansh — Codex prompts (backend API + LLM · merge-master)
+# Riyansh — agent prompts (backend API + LLM · merge-master)
 
-**How to use:** open Codex in the repo root. Paste ONE phase's entire fenced block as a
-single message — it contains everything Codex needs. When it finishes, run the VERIFY
-commands, then ship:
+**How to use (every phase):**
+1. Fresh branch from latest main, every time (even if you are already on a branch, because squash-merged branches must not be reused):
+   `git checkout main && git pull && git checkout -b riyansh/phase<N>`
+2. Paste ONE phase's entire fenced block into Codex/Devin. When it says done, run the VERIFY commands yourself.
+3. Ship: `git add -A && git commit -m "riyansh phase <N>" && git push -u origin HEAD && gh pr create --fill`
+   (If Devin opened the PR itself, skip this step.)
+4. As soon as YOUR PR is merged, start the next phase. **Do not wait for teammates.** Lanes never overlap, so there's nothing to wait for.
 
-```
-git checkout -b riyansh/phase<N> && git add -A && git commit -m "phase <N>" && git push -u origin riyansh/phase<N> && gh pr create --fill
-```
-
-**Merge duty:** when all 3 Phase-N PRs are up, merge in order **Darsh → Pranali → yours**.
-Run `cd backend && uv run python smoke_test.py` after each merge.
+**Merge duty (rolling, not batched):** merge any teammate PR within ~5 min of "PR up". Before you merge:
+`git fetch && git checkout <their-branch> && cd backend && uv run python smoke_test.py` must print `ALL PASS`
+(after Darsh Phase 1 lands; before that, check the 4 baseline results by eye). Squash-merge, then post "merged".
+If two PRs are waiting, merge Darsh first, then Pranali, then yours.
 
 **If the AI claims done but a VERIFY fails, or stops mid-task, reply with exactly:**
 `Continue — complete every remaining numbered item, then run all VERIFY commands again.`
 
-**Your files:** `backend/main.py`, `backend/llm_enrich.py` — never touch anything else.
-**Extra:** register Finance/Ops by 11:15 · 12:30 fallback call · 15:30 freeze.
+**Your files:** `backend/main.py`, `backend/llm_enrich.py`, `E2E.md`, `CONTRACT.md` (you are the only one editing it today),
+and `plugin/` **only if** you call GO on the real Lightfern plugin at 12:30 (see the bottom of `team/pranali/PROMPTS.md`).
+**Clock:** register Finance/Ops by 11:15 · 12:30 plugin GO/NO-GO · 14:30 code complete · 15:00 freeze.
 
 ---
 
-## Phase 1 — complete API surface
+## Phase 1 — complete API surface ✅ DONE (PR #1 + PR #2 merged 11:03)
 
-```
-You are a senior backend engineer working in the CommitGuard repository (read AGENTS.md and CONTRACT.md first — they define the project and the API contract, which is additive-only: never rename or remove response fields).
+Nothing to paste. Validation, `/verify-batch`, `/audit-log?type=&result=` (falls back until Darsh Phase 2),
+OpenAPI summaries, and `{"error": ...}` bodies are all on main and verified.
 
-CommitGuard: a local FastAPI backend (backend/main.py) checks drafted emails/messages/invoices against backend/company_brain.json using deterministic rules in backend/rules.py. POST /verify-context returns {status, risk_level, violations[], suggested_rewrite, meta}; POST /execute-action delegates to backend/actions.py. A single-file HTML demo (demo/index.html) is served at GET /.
+## Phase 2 — llm_enrich.py + advisories (target: merged by 12:15)
 
-YOUR FILES ONLY: backend/main.py. Do NOT modify any other file.
-
-TASK — complete the API surface. Some of this may already exist — verify what exists, keep what works, build what's missing. All changes must be ADDITIVE: existing response shapes stay identical.
-
-1. VALIDATION on POST /verify-context:
-   - text must be non-empty after .strip() → HTTP 422 with body exactly {"error": "text must be non-empty"} (use fastapi.responses.JSONResponse, not HTTPException — the shape must be {"error": ...}, not {"detail": ...})
-   - context_type must be one of {"outgoing_email", "slack_message", "incoming_invoice", "general"} (a module-level VALID_CONTEXT_TYPES set) → 422 {"error": "context_type must be one of [...]"}
-   - Apply the same validation through a shared _validate(text, context_type) helper returning a JSONResponse or None.
-
-2. POST /verify-batch — request {"items": [{"text": "...", "context_type": "..."}]} → response {"results": [<identical /verify-context response object per item>]}. Empty items → 422 {"error": "items must be a non-empty list"}. Each item validated with _validate. Extract the existing verify logic into _verify(text, context_type) so both endpoints share it.
-
-3. AUDIT FILTERS — extend GET /audit-log to accept optional query params ?type=<action_type> and ?result=<result>, forwarded to actions.read_audit(limit, type=..., result=...) IF that signature exists (Darsh's Phase 2 adds it — call read_audit defensively: try the filtered call, fall back to read_audit(limit) if it raises TypeError). Default limit stays 20.
-
-4. OPENAPI POLISH — add summary= and description= to every route decorator so /docs reads like a product: e.g. verify_context summary="Check a draft or invoice against the company brain", execute_action summary="Apply fixes, stage invoices, escalate fraud, log overrides".
-
-5. ERROR CONSISTENCY — every error path in this file returns a JSON body containing an "error" string field (HTTPException detail dicts that already include "error" are fine; add the field where missing).
-
-CONSTRAINTS: additive only per CONTRACT.md; no new dependencies; must run with OPENAI_API_KEY unset.
-
-WORKING RULES — follow exactly:
-- Read backend/main.py completely BEFORE editing it.
-- Work the numbered items IN ORDER and complete ALL of them — if one is already implemented, confirm it matches this spec and move on.
-- Never silently skip an item — if truly blocked, stop and output "STOPPED AT ITEM <n>: <reason>".
-- DONE WHEN: every item is complete AND every VERIFY command produces the stated output. Before finishing, re-check each numbered item against your changes. Partial completion is a failure.
-- FREEDOM: response shapes, error bodies, function signatures, and message strings in this spec are exact (they're the product contract). Implementation details — helper organization, middleware structure, schema construction — are yours to improve. If you see a cleaner or more robust approach that passes the same VERIFY, take it, and note any spec deviation in your final summary.
-
-VERIFY — run and paste output (server may already be running; if a curl fails, start it first: `cd backend && uv run uvicorn main:app --port 8000`):
-- cd backend && uv run python smoke_test.py → all 4 pass, identical results
-- curl -s 127.0.0.1:8000/health → ok:true
-- curl -s -X POST 127.0.0.1:8000/verify-batch -H 'Content-Type: application/json' -d '{"items":[{"text":"we can offer Net-60","context_type":"outgoing_email"},{"text":"signed off, Net-30","context_type":"general"}]}' → {"results":[...]} with a violation then CLEAN
-- curl -s -X POST 127.0.0.1:8000/verify-context -H 'Content-Type: application/json' -d '{"text":"   "}' → 422 {"error":"text must be non-empty"}
-- curl -s -X POST 127.0.0.1:8000/verify-context -H 'Content-Type: application/json' -d '{"text":"hello","context_type":"bogus"}' → 422 {"error":...}
-- GET /audit-log?type=STAGE_INVOICE → 200 (empty array is fine)
-- GET /docs → all endpoints have summaries
-```
-
-## Phase 2 — complete llm_enrich.py
+Start only after any local Phase-1 polish on `main.py` is merged or thrown away, because this phase edits `main.py` too.
 
 ```
 You are a senior backend engineer working in the CommitGuard repository (read AGENTS.md and CONTRACT.md first).
 
-backend/llm_enrich.py is the OPTIONAL second stage: after the deterministic rules engine runs, it asks OpenAI for additional findings and a polished full-text rewrite. Contract rules: it must NEVER remove or contradict a rule finding, must NEVER crash or raise (no API key, no network, timeout, bad JSON → all return None), and must never slow the endpoint (hard timeout). backend/main.py calls llm_enrich(text, context_type, violations, brain) and uses llm_enabled() — keep both signatures identical.
+backend/llm_enrich.py is the OPTIONAL second stage after the deterministic rules engine (backend/rules.py). It must NEVER crash or raise (no API key, openai package missing, no network, timeout, bad JSON → return None), must never remove or change a rule finding, and must never change the demo's verdicts. backend/main.py imports `from llm_enrich import llm_enrich, llm_enabled` and calls llm_enrich(text, context_type, violations, brain) inside _verify(); keep both signatures identical.
 
-YOUR FILES ONLY: backend/llm_enrich.py. Do NOT modify any other file. Do not add dependencies — use the `openai` package already in requirements.txt.
+IMPORTANT FACT: the current file sends an OpenAI strict json_schema whose objects lack "additionalProperties": false / full "required" lists. OpenAI rejects such schemas with a 400, so today the LLM layer silently fails on every call. The schema below is strict-mode valid. Use it exactly.
 
-TASK — rewrite backend/llm_enrich.py completely to this spec:
+YOUR FILES ONLY: backend/llm_enrich.py and backend/main.py. Do NOT modify any other file. No new dependencies.
 
-1. LAZY CLIENT — module-level _client = None. Inside a _get_client() helper: if _client is None and os.environ.get("OPENAI_API_KEY") is set, construct OpenAI() inside try/except (any exception → return None). Import openai lazily inside the helper too — `import llm_enrich` must work with the package missing entirely.
+TASK:
 
-2. llm_enabled() → returns True only when a client can be constructed AND OPENAI_API_KEY is set.
+1. LAZY CLIENT in llm_enrich.py: module-level _client = None. A _get_client() helper: if _client is None and os.environ.get("OPENAI_API_KEY") is set, `from openai import OpenAI` INSIDE the helper and construct OpenAI() inside try/except (any exception → return None). `import llm_enrich` must work with the openai package missing.
 
-3. llm_enrich(text, context_type, violations, brain) → Optional[dict]:
-   - Return None immediately if no client.
-   - Prompt design: system message = "You are CommitGuard's secondary review layer. Deterministic rules already found the listed violations — do NOT repeat them. Find ONLY additional risks (implied commitments, tone problems, missing disclaimers, promises not backed by the brain) and produce a polished rewrite that resolves ALL findings while keeping the sender's tone."
-   - User message contains: json.dumps(brain), json.dumps(existing violations), context_type, and the draft text.
-   - Call: client.chat.completions.create(model="gpt-4o-mini", temperature=0, timeout=4, response_format={"type": "json_schema", "json_schema": {"name": "commit_guard_enrich", "strict": True, "schema": {...}}})
-   - JSON SCHEMA (use exactly):
-     {"type":"object","properties":{
-       "violations":{"type":"array","items":{"type":"object","properties":{
-         "category":{"type":"string"},"severity":{"type":"string","enum":["LOW","MEDIUM","HIGH","CRITICAL"]},
-         "issue":{"type":"string"},"correction":{"type":"string"},
-         "suggested_rewrite":{"type":["string","null"]},
-         "evidence":{"type":["object","null"],"properties":{"brain_key":{"type":"string"},"expected":{},"found":{}},"required":["brain_key"],"additionalProperties":true},
-         "span":{"type":["object","null"],"properties":{"text":{"type":"string"},"start":{"type":"integer"},"end":{"type":"integer"}},"required":["text","start","end"],"additionalProperties":false}},
-         "required":["category","severity","issue","correction","suggested_rewrite","evidence","span"],"additionalProperties":false}},
-       "full_rewrite":{"type":["string","null"]}},
-      "required":["violations","full_rewrite"],"additionalProperties":false}
-   - Parse json.loads of the response content inside try/except → None on failure.
-   - DEDUPE: filter out any returned violation whose evidence.brain_key already appears in the existing rule violations, or whose category+overlapping span duplicates one.
-   - Tag each surviving added violation with source: v["source"]="llm" (additive field).
-   - Return {"violations": <added violations>, "full_rewrite": <str or None>}.
-   - ANY exception anywhere in this function → return None.
+2. llm_enabled() → True only when OPENAI_API_KEY is set AND _get_client() returns a client.
+
+3. llm_enrich(text, context_type, violations, brain) → Optional[dict]. The whole body sits inside try/except Exception → return None.
+   - No client → return None immediately.
+   - messages: system = "You are CommitGuard's secondary review layer. Deterministic rules already found the listed violations — do NOT repeat them. Report ONLY additional, concrete risks backed by the company brain (implied commitments, promises not backed by the brain, missing approvals). If there are none, return an empty list. Also produce a polished full rewrite that resolves ALL findings (rule + yours) while keeping the sender's tone; return null for full_rewrite if there is nothing to fix." user = json.dumps(brain), json.dumps(violations), context_type, and the draft text, clearly labelled.
+   - Call client.chat.completions.create(model="gpt-4o-mini", temperature=0, timeout=4, messages=..., response_format={"type": "json_schema", "json_schema": {"name": "commit_guard_enrich", "strict": True, "schema": SCHEMA}})
+   - SCHEMA (strict-mode valid, use exactly):
+     {"type":"object","additionalProperties":false,"required":["violations","full_rewrite"],"properties":{
+       "violations":{"type":"array","items":{"type":"object","additionalProperties":false,
+         "required":["category","severity","issue","correction","suggested_rewrite","evidence"],
+         "properties":{
+           "category":{"type":"string"},
+           "severity":{"type":"string","enum":["LOW","MEDIUM"]},
+           "issue":{"type":"string"},"correction":{"type":"string"},
+           "suggested_rewrite":{"type":["string","null"]},
+           "evidence":{"type":"object","additionalProperties":false,"required":["brain_key","expected","found"],
+             "properties":{"brain_key":{"type":"string"},"expected":{"type":"string"},"found":{"type":"string"}}}}}},
+       "full_rewrite":{"type":["string","null"]}}}
+   - json.loads the content. DEDUPE: drop any returned item whose category OR evidence.brain_key already appears in the rule violations. Tag survivors v["source"] = "llm".
+   - Return {"violations": <survivors>, "full_rewrite": <str or None>}.
+
+4. main.py _verify() — LLM output is ADVISORY ONLY (additive per CONTRACT.md):
+   - status, risk_level and "violations" are computed from the RULE violations only, exactly as today. LLM items never go into "violations".
+   - Add a new top-level response field "advisories": the llm "violations" list, or [] when the LLM is off/failed. Always present.
+   - Top-level "suggested_rewrite": if status is CLEAN → None (always). Otherwise llm full_rewrite if it is a non-empty string, else rules.apply_fixes(...) as today.
+   - Remove the old loop that copied LLM suggested_rewrite into rule violations by category (dead after dedupe).
+   - meta: keep engine/checks_run/latency_ms; set engine="rules+llm" only when llm_enrich returned a dict; add meta.rules_ms = time spent in rules.run_rules only (rounded to 2 dp), so the UI can show the sub-5ms stat even when the LLM is on.
+
+CONSTRAINTS: additive only; /verify-batch returns the same object shape per item (it shares _verify); must run with OPENAI_API_KEY unset.
 
 WORKING RULES — follow exactly:
-- Read backend/llm_enrich.py and the current call site in backend/main.py completely BEFORE editing.
+- Read backend/llm_enrich.py and backend/main.py completely BEFORE editing.
 - Work the numbered items IN ORDER and complete ALL of them.
 - Never silently skip an item — if truly blocked, stop and output "STOPPED AT ITEM <n>: <reason>".
-- DONE WHEN: every item is complete AND every VERIFY command produces the stated output. Before finishing, re-check each numbered item against your changes. Partial completion is a failure.
-- FREEDOM: response shapes, error bodies, function signatures, and message strings in this spec are exact (they're the product contract). Implementation details — helper organization, middleware structure, schema construction — are yours to improve. If you see a cleaner or more robust approach that passes the same VERIFY, take it, and note any spec deviation in your final summary.
+- DONE WHEN: every item is complete AND every VERIFY command produces the stated output. Partial completion is a failure.
+- FREEDOM: response fields, schema, signatures and the advisory-only rule are exact. Helper structure is yours.
 
-VERIFY — run all from the backend/ directory and paste output:
+VERIFY — run from backend/ and paste output:
 - env -u OPENAI_API_KEY uv run python -c "import llm_enrich; print(llm_enrich.llm_enabled())" → False, no error
-- env -u OPENAI_API_KEY uv run python smoke_test.py → all pass
-- (only if an OpenAI key is available — skip otherwise, it's optional): OPENAI_API_KEY=... uv run python -c "import llm_enrich,json;print(llm_enrich.llm_enrich('we can do net-90 and 40% off','outgoing_email',[],json.load(open('company_brain.json'))))"
+- env -u OPENAI_API_KEY uv run python smoke_test.py → 4 baseline results unchanged (ALL PASS if Darsh's assertions have landed)
+- env -u OPENAI_API_KEY uv run python -c "import main; r=main._verify('we can offer Net-60','outgoing_email'); print(r['status'], r['advisories'], r['meta']['engine'], 'rules_ms' in r['meta'])" → VIOLATION_DETECTED [] rules True
+- env -u OPENAI_API_KEY uv run python -c "import main; r=main._verify('Net-30, billed monthly with 50% upfront','outgoing_email'); print(r['status'], r['suggested_rewrite'])" → CLEAN None
+- OPTIONAL, only if a key is available: OPENAI_API_KEY=... uv run python -c "import llm_enrich,json;print(llm_enrich.llm_enrich('we can do net-90 and 40% off, and we will refund anything','outgoing_email',[],json.load(open('company_brain.json'))))" → a dict (NOT None). If it prints None, print the caught exception temporarily to debug the schema, then remove the print.
 ```
 
-## Phase 3 — E2E proof + integration check
+## Phase 3 — E2E proof + CONTRACT update (start after Darsh Phase 3 is merged, ~13:30; target merged by 14:15)
 
 ```
-You are a senior engineer working in the CommitGuard repository (read AGENTS.md first).
+You are a senior engineer working in the CommitGuard repository (read AGENTS.md and CONTRACT.md first).
 
-YOUR FILES: create E2E.md at repo root ONLY. Do NOT modify any existing file.
+YOUR FILES ONLY: create E2E.md at repo root, and edit CONTRACT.md. Do NOT modify any other file.
 
-TASK — write E2E.md, a numbered verification runbook a judge or teammate can follow to prove the whole system works, then RUN every command yourself and paste real outputs into the file:
+TASK:
 
-1. Setup: clone → cd backend && uv venv --python 3.12 && uv pip install -r requirements.txt → start: uv run uvicorn main:app --port 8000 (or ./start.sh from root)
-2. curl -s 127.0.0.1:8000/health → expected {"ok":true,"engine":"rules",...}
-3. For EACH of the scenarios in backend/scenarios.json: the exact curl POST /verify-context command (with the scenario's real context_type) and the EXPECTED violation list:
-   - sales_email → FINANCIAL_POLICY + MARGIN_BREACH + TREASURY_LOCK (HIGH)
-   - vendor_invoice → CRITICAL PAYMENT_REDIRECTION + 2× CONTRACT_OVERAGE
-   - support_reply → 2× PROMISE_BREACH
-   - clean_email → CLEAN
-   - plus any new-rule scenarios added since (check scenarios.json)
-4. POST /execute-action examples with expected responses: STAGE_INVOICE (then show round_staging_queue.json entry), ESCALATE_FRAUD (mentions CFO name), APPROVE_OVERRIDE without reason → HTTP 400, APPROVE_OVERRIDE with reason → success:true
-5. GET /audit-log?limit=3 → newest-first entries
-6. GET / → 200 (demo UI), GET /inspector.html → 200
-7. Offline note: every step works with OPENAI_API_KEY unset — state it.
-Include the real observed outputs inline under each command.
+A. Before running anything, back up the demo data: `cp backend/audit_log.jsonl /tmp/audit.bak 2>/dev/null; cp backend/round_staging_queue.json /tmp/stage.bak 2>/dev/null`. Restart the server so it runs current main: `pkill -f "uvicorn main:app"; cd backend && (nohup uv run uvicorn main:app --port 8000 > /tmp/cg.log 2>&1 &) ; sleep 3` with OPENAI_API_KEY unset.
+
+B. Write E2E.md, a numbered runbook a judge or teammate can follow to prove the whole system works. RUN every command and paste the REAL output under it (audit ids and timestamps will differ per run, so say so once at the top):
+1. Setup: clone → cd backend && uv venv --python 3.12 && uv pip install -r requirements.txt → uv run uvicorn main:app --port 8000 (or ./start.sh from root)
+2. curl -s 127.0.0.1:8000/health → {"ok":true,"engine":"rules",...}
+3. For EACH key in backend/scenarios.json: the exact curl POST /verify-context (with that scenario's own context_type; build the JSON with python3 -c or jq so newlines are escaped) and the observed categories. The 4 baseline results must be: sales_email → FINANCIAL_POLICY + MARGIN_BREACH + TREASURY_LOCK · vendor_invoice → CRITICAL PAYMENT_REDIRECTION + 2× CONTRACT_OVERAGE · support_reply → 2× PROMISE_BREACH · clean_email → CLEAN. Include any extra scenarios (e.g. slack_urgent_fraud) as they actually behave.
+4. One curl per new rule from Darsh's phases (DUPLICATE_INVOICE, SENDER_DOMAIN_MISMATCH, URGENT_PAYMENT_CHANGE, UNVERIFIED_CLAIM). Copy the inline test texts from backend/smoke_test.py. If a category does not fire, write "NOT IMPLEMENTED ON MAIN" instead of inventing output.
+5. POST /execute-action: STAGE_INVOICE with payload {"invoice":"E2E-<unix seconds>","text":"..."} twice (second → duplicate rejected, if Darsh Phase 2 is merged), then show the round_staging_queue.json entry; ESCALATE_FRAUD (message names the CFO); APPROVE_OVERRIDE without reason → HTTP 400; with reason → success:true.
+6. GET /audit-log?limit=3 → newest first; GET /audit-log?type=STAGE_INVOICE → only STAGE_INVOICE rows.
+7. GET / → 200, GET /inspector.html → 200, GET /docs → 200.
+8. `cd backend && uv run python smoke_test.py` → ALL PASS; `uv run python bench.py` → paste the table (this is the pitch's latency stat).
+9. Offline note: every step above ran with OPENAI_API_KEY unset and no network.
+
+C. CONTRACT.md (additive only): add the new categories that actually exist on main (DUPLICATE_INVOICE, SENDER_DOMAIN_MISMATCH, URGENT_PAYMENT_CHANGE, UNVERIFIED_CLAIM; check backend/rules.py and list only those present) to the category list; document the top-level "advisories" array (LLM-only notes, never affect status), meta.rules_ms, the optional per-violation "risk_score", the GET /audit-log ?type= and ?result= filters, the duplicate-action response {"success": false, "error": "duplicate", ...}, and that unknown action_type → 400 (only if actions.py does that on main).
+
+D. Finally restore the demo data: `cp /tmp/audit.bak backend/audit_log.jsonl 2>/dev/null; cp /tmp/stage.bak backend/round_staging_queue.json 2>/dev/null` (both files are gitignored).
 
 WORKING RULES — follow exactly:
-- Cover ALL 7 sections — do not stop after the curls; the execute-action and offline sections are required.
-- Never fabricate an expected output — run each command and paste what it ACTUALLY returned.
-- DONE WHEN: E2E.md exists at repo root with real outputs for every numbered section. Partial completion is a failure.
-- FREEDOM: all 7 sections are required, but add anything that makes the proof more convincing — extra edge-case curls, timing output, a troubleshooting note. More proof is better.
+- Cover ALL sections. Never fabricate an output; paste what each command ACTUALLY returned.
+- DONE WHEN: E2E.md has real outputs for every section, CONTRACT.md is updated, demo data restored. Partial completion is a failure.
+- FREEDOM: extra edge-case curls and timing output are welcome.
 
-VERIFY: I will run the file's commands in order — every output must match.
+VERIFY: `cd backend && uv run python smoke_test.py` → ALL PASS; `git diff --stat` shows only E2E.md and CONTRACT.md.
 ```
 
 ## Phase 4 — freeze duty (not an agent task)
 
-- `cd backend && uv run python smoke_test.py` + `uv run python bench.py` on main — green
-- Merge remaining PRs (Darsh → Pranali → yours)
-- If the Lightfern SDK is usable: fill the `[SDK:]` slots in Pranali's conditional plugin prompt (bottom of team/pranali/PROMPTS.md) and hand it to her
-- 15:30: call the freeze — demo-blockers only
+- **14:30 code complete.** On the DEMO laptop: `git checkout main && git pull`, restart `./start.sh`,
+  `cd backend && uv run python smoke_test.py` (ALL PASS) and `uv run python bench.py`. Post the bench avg/p95 to Pranali.
+- Reset demo data so the Inspector looks real and has no test junk:
+  `cd backend && uv run python seed_audit.py --reset` (if Darsh Phase 4 didn't land: `rm -f audit_log.jsonl round_staging_queue.json && uv run python seed_audit.py`).
+- Decide the demo LLM mode: **recommended: run the demo with `OPENAI_API_KEY` unset** (deterministic and instant). Only set the key if Phase 2's optional VERIFY returned a dict AND a full click-through of all 4 scenarios still shows the same verdicts.
+- **15:00 FREEZE.** After this, demo-blockers only, and every merge needs a green smoke test first.

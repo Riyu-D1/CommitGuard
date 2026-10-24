@@ -31,9 +31,11 @@ auditability ("why was this flagged?" must cite evidence), and working software.
 - `plugin/` — adapter.js (only backend client), simulator.html;
   rules.js is a planned offline-rules port (may not exist yet)
 
-Work happens in sequential phases on branches `<name>/phase<N>`. If a
-referenced file or brain key doesn't exist, a teammate's phase may not
-have merged yet — treat it as pending, not missing.
+Work happens in rolling phases on branches `<name>/phase<N>`, each cut from
+fresh main. Teammates' phases merge at different times: if a referenced
+file, brain key, response field or rule category doesn't exist, that
+phase may not have merged yet. Treat it as pending, degrade gracefully,
+and never create it outside your own files.
 - `pitch/` — submission, script, rehearsal sheet, one-pager
 - `CONTRACT.md` — the API contract. **Additive only — never rename/remove fields.**
 
@@ -42,8 +44,14 @@ have merged yet — treat it as pending, not missing.
 ```bash
 cd backend && uv venv --python 3.12 && uv pip install -r requirements.txt
 cd backend && uv run uvicorn main:app --port 8000   # serve on 127.0.0.1:8000
-cd backend && uv run python smoke_test.py           # MUST stay green
+cd backend && uv run python smoke_test.py           # must print ALL PASS / exit 0
+# restart after editing backend code (no --reload): a running server keeps the OLD code
+pkill -f "uvicorn main:app"; cd backend && (nohup uv run uvicorn main:app --port 8000 > /tmp/cg.log 2>&1 &) ; sleep 3
+cd backend && uv run python seed_audit.py           # demo audit entries (--reset once Darsh P4 lands)
 ```
+
+`audit_log.jsonl` and `round_staging_queue.json` are gitignored local state.
+Test curls write to them, so clean up test rows you create.
 
 Use `127.0.0.1`, never `localhost` (IPv6 resolution issue on some Macs).
 Backend must work with `OPENAI_API_KEY` unset — no exceptions.
@@ -56,5 +64,8 @@ Backend must work with `OPENAI_API_KEY` unset — no exceptions.
   2 CONTRACT_OVERAGE · support_reply→2 PROMISE_BREACH · clean_email→CLEAN
 - Every violation cites evidence — a brain_key, expected vs found value
 - Single-file frontend HTML, vanilla JS/CSS, no CDN (offline demo)
-- File ownership: backend/main.py + llm_enrich.py = Riyansh; other backend
-  files = Darsh; demo/ + plugin/ + pitch/ = Pranali. Stay in your lane.
+- File ownership: backend/main.py + llm_enrich.py + E2E.md + CONTRACT.md =
+  Riyansh (plus plugin/ today, only if the plugin is GO); other backend
+  files = Darsh; demo/ + pitch/ = Pranali. Stay in your lane.
+- LLM output is advisory only: it goes in the top-level `advisories` array
+  and never changes `status`, `risk_level` or `violations`.

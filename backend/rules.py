@@ -5,8 +5,17 @@ auditable logic. Each violation carries an `evidence` block pointing at the
 exact brain key that fired it, so nothing is ever "the model said so".
 """
 
+import json
+import os
 import re
+import tempfile
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Optional
+
+BASE_DIR = Path(__file__).parent
+BRAIN_PATH = BASE_DIR / "company_brain.json"
 
 SEVERITY_ORDER = {"LOW": 0, "MEDIUM": 1, "HIGH": 2, "CRITICAL": 3}
 SEVERITY_RISK_SCORE = {"LOW": 20, "MEDIUM": 45, "HIGH": 70, "CRITICAL": 95}
@@ -320,8 +329,8 @@ def check_sender_domain(text: str, brain: dict) -> list:
 
 
 _URGENCY_RE = re.compile(
-    r"(?i)\b(urgent|immediately|asap|today|by eod|end of day|time-sensitive|"
-    r"before close)\b")
+    r"(?i)\b(urgent(?:ly)?|immediately|asap|today|by eod|end of day|"
+    r"time-sensitive|before close)\b")
 _PAYDETAIL_RE = re.compile(
     r"(?i)\b(iban|sort code|bank details|account number|updated payment|"
     r"new account|payment details|change of bank)\b")
@@ -375,6 +384,80 @@ def check_unverified_claims(text: str, brain: dict) -> list:
     return out
 
 
+def check_learned_rules(text: str, brain: dict) -> list:
+    out = []
+    for rule in brain.get("learned_rules", []):
+        try:
+            phrase = rule["phrase"]
+            m = re.search(rf"(?i)\b{re.escape(phrase)}\b", text)
+            if not m:
+                continue
+            out.append(_v(
+                rule["category"] or "LEARNED_RULE",
+                rule["severity"],
+                rule["issue"],
+                rule["correction"],
+                {"brain_key": f"learned_rules[{rule['id']}]",
+                 "expected": f"no '{phrase}' without approval",
+                 "found": m.group(0)},
+                span={"text": m.group(0), "start": m.start(), "end": m.end()},
+            ))
+        except Exception:
+            continue  # fail open on any malformed learned rule
+    return out
+
+
+LEARNED_SEVERITIES = {"MEDIUM", "HIGH", "CRITICAL"}
+
+
+def add_learned_rule(rule: dict, brain_path=BRAIN_PATH) -> dict:
+    """Store a runtime-added rule in company_brain.json (atomic rewrite).
+
+    Raises ValueError on bad input; dedupes on phrase (case-insensitive).
+    """
+    if not isinstance(rule, dict):
+        raise ValueError("learned rule must be an object")
+    phrase = rule.get("phrase")
+    if not isinstance(phrase, str) or not (3 <= len(phrase.strip()) <= 120):
+        raise ValueError("learned rule 'phrase' must be 3-120 characters")
+    phrase = phrase.strip()
+    severity = rule.get("severity", "HIGH")
+    if severity not in LEARNED_SEVERITIES:
+        raise ValueError(f"severity must be one of {sorted(LEARNED_SEVERITIES)}")
+
+    brain_path = Path(brain_path)
+    brain = json.loads(brain_path.read_text())
+    learned = brain.setdefault("learned_rules", [])
+    for existing in learned:
+        if isinstance(existing, dict) and \
+                str(existing.get("phrase", "")).lower() == phrase.lower():
+            return existing
+
+    stored = {
+        "id": "lr_" + uuid.uuid4().hex[:8],
+        "phrase": phrase,
+        "category": rule.get("category") or "LEARNED_RULE",
+        "severity": severity,
+        "issue": rule.get("issue") or f"Message contains learned-rule phrase '{phrase}'.",
+        "correction": rule.get("correction")
+            or "Remove the phrase or get explicit approval before sending.",
+        "created_ts": datetime.now(timezone.utc).isoformat(),
+    }
+    if rule.get("source_feed_id"):
+        stored["source_feed_id"] = rule["source_feed_id"]
+    learned.append(stored)
+
+    fd, tmp = tempfile.mkstemp(dir=brain_path.parent, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(json.dumps(brain, indent=2) + "\n")
+        os.replace(tmp, brain_path)
+    except BaseException:
+        os.unlink(tmp)
+        raise
+    return stored
+
+
 ALL_CHECKS = [
     check_payment_terms,
     check_discount_cap,
@@ -388,6 +471,7 @@ ALL_CHECKS = [
     check_sender_domain,
     check_urgent_payment_change,
     check_unverified_claims,
+    check_learned_rules,
 ]
 
 # Which context_types each check runs in. "ALL" = fraud signatures that must
@@ -397,6 +481,7 @@ CONTEXTS = {
     check_bank_details: "ALL",
     check_duplicate_invoice: "ALL",
     check_urgent_payment_change: "ALL",
+    check_learned_rules: "ALL",
     check_amounts_vs_contract: {"incoming_invoice"},
     check_sender_domain: {"incoming_invoice"},
     check_payment_terms: {"outgoing_email", "slack_message", "general"},

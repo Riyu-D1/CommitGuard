@@ -53,5 +53,6 @@
     "cfo": "Amara Osei",
     "finance_approval_channel": "#finance-approvals"
   },
-  "known_sender_domains": ["cloudscale.co.uk", "northwind-analytics.com", "yourcompany.com", "meridian-sec.com"]
+  "known_sender_domains": ["cloudscale.co.uk", "northwind-analytics.com", "yourcompany.com", "meridian-sec.com"],
+  "learned_rules": []
 }

@@ -354,6 +354,15 @@ def feed_override(feed_id: int, req: OverrideRequest):
     return {"override": override, "rule": rule, "recheck": recheck}
 
 
+@app.get("/slack/status",
+         summary="Slack monitor mode and health",
+         description="Returns {mode: 'slack' | 'simulated', channel, "
+                     "token: 'set' | 'missing' (the value is never exposed), "
+                     "reply_enabled, last_poll_ts, last_error}.")
+def slack_status():
+    return slack_feed.slack_status()
+
+
 @app.get("/health",
          summary="Liveness and engine status",
          description="Returns {ok, engine: 'rules' | 'rules+llm', checks, brain_keys, "

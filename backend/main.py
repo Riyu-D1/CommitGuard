@@ -15,6 +15,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 import rules
 import actions
 import slack_feed
+import lightfern_bridge
 from llm_enrich import llm_enrich, llm_enabled, llm_polish_answer
 
 from rules import explain_policy, policy_cards
@@ -24,9 +25,17 @@ BRAIN_PATH = BASE / "company_brain.json"
 
 @asynccontextmanager
 async def lifespan(_app):
+    lightfern_bridge.start(hooks={
+        "learn": _learn,
+        "exception": _learn_exception,
+        "override": _apply_override,
+        "ask": _ask_brain,
+        "import_brain": _import_brain,
+    })
     slack_feed.start(verify_fn=_verify, scenarios=SCENARIOS,
                      ask_fn=_ask_brain, override_fn=_slack_override)
     yield
+    lightfern_bridge.stop()
 
 
 app = FastAPI(title="CommitGuard", version="1.0.0", lifespan=lifespan)
@@ -166,7 +175,9 @@ def verify_context(req: VerifyRequest):
     err = _validate(req.text, req.context_type)
     if err:
         return err
-    return _verify(req.text, req.context_type)
+    result = _verify(req.text, req.context_type)
+    lightfern_bridge.record_api_check(req.text, req.context_type, result)
+    return result
 
 
 @app.post("/verify-batch",
@@ -181,7 +192,12 @@ def verify_batch(req: VerifyBatchRequest):
         err = _validate(it.text, it.context_type)
         if err:
             return err
-    return {"results": [_verify(it.text, it.context_type) for it in req.items]}
+    results = []
+    for it in req.items:
+        res = _verify(it.text, it.context_type)
+        lightfern_bridge.record_api_check(it.text, it.context_type, res)
+        results.append(res)
+    return {"results": results}
 
 
 def _ask_brain(question: str) -> dict:
@@ -292,6 +308,33 @@ def _learn(phrase, category, severity, issue, correction, source_feed_id):
     if new_brain:
         COMPANY_BRAIN = new_brain
     return stored, None
+
+
+def _learn_exception(phrase, category, note=None, source_feed_id=None):
+    """Shared learned-exception logic — used by _apply_override and by the
+    Lightfern bridge for 'fine' commands on entries with no feed id.
+    Returns (stored_exception, error_response)."""
+    try:
+        stored = rules.add_learned_exception({
+            "phrase": phrase, "category": category, "note": note,
+            "source_feed_id": source_feed_id})
+    except ValueError as e:
+        return None, JSONResponse(status_code=422,
+                                  content={"error": str(e)})
+    global COMPANY_BRAIN
+    new_brain = load_brain()
+    if new_brain:
+        COMPANY_BRAIN = new_brain
+    return stored, None
+
+
+def _import_brain(brain: dict) -> None:
+    """Swap the whole brain for a dict edited inside Lightfern: atomic write
+    to company_brain.json, then in-memory swap. The bridge validates the
+    shape before calling this."""
+    global COMPANY_BRAIN
+    rules._write_brain(brain, BRAIN_PATH)
+    COMPANY_BRAIN = brain
 
 
 @app.post("/learn",
@@ -423,17 +466,11 @@ def _apply_override(feed_id, decision, phrase=None, note=None, category=None):
             return None, JSONResponse(status_code=422, content={
                 "error": "phrase is required — item violations have no "
                          "span text to default to"})
-        try:
-            exception = rules.add_learned_exception({
-                "phrase": ph, "category": cat, "note": note,
-                "source_feed_id": feed_id})
-        except ValueError as e:
-            return None, JSONResponse(status_code=422,
-                                      content={"error": str(e)})
+        exception, err = _learn_exception(ph, cat, note=note,
+                                          source_feed_id=feed_id)
+        if err:
+            return None, err
         used_phrase = ph
-        new_brain = load_brain()
-        if new_brain:
-            COMPANY_BRAIN = new_brain
     if decision in ("missed", "false_positive"):
         recheck = _verify(item["text"], item.get("context_type", "slack_message"))
         slack_feed.update_item(feed_id, recheck)
@@ -481,6 +518,16 @@ def feed_override(feed_id: int, req: OverrideRequest):
     if err:
         return err
     return payload
+
+
+@app.get("/lightfern/status",
+         summary="Lightfern file-bridge status",
+         description="Returns {enabled, app_dir, last_export, last_inbox, "
+                     "checks_total, inbox_processed, feed_entries, errors}. "
+                     "enabled=false when LIGHTFERN_APP_DIR is unset — the "
+                     "backend then behaves exactly as without the bridge.")
+def lightfern_status():
+    return lightfern_bridge.status()
 
 
 @app.get("/slack/status",

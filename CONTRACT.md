@@ -281,3 +281,37 @@ Replying inside a CommitGuard thread runs the same override logic:
 answers `📚 Learned: …` in the thread. Threads the bot has posted in are
 polled via `conversations.replies` for 30 min after posting, at most once
 every 5s; 429 `Retry-After` is honored.
+
+## Lightfern bridge (see backend/lightfern_bridge.py)
+
+File-based integration, enabled only when `LIGHTFERN_APP_DIR` points at an
+installed `CommitGuard Brain` app folder. No new request shapes — the bridge
+mirrors what the existing endpoints already produce.
+
+### GET /lightfern/status
+
+```json
+{ "enabled": true, "app_dir": "…/CommitGuard Brain",
+  "last_export": "<iso ts>", "last_inbox": "<iso ts>",
+  "checks_total": 0, "inbox_processed": 0, "feed_entries": 0,
+  "errors": ["<recent bridge errors, newest first>"] }
+```
+
+`enabled: false` when `LIGHTFERN_APP_DIR` is unset — everything else behaves
+exactly as it does without the bridge.
+
+### Files the bridge owns inside the app folder
+
+- `brain/company_brain.json` + `brain/policies/*.md` — re-exported on startup
+  and after every learn/override. Edits made inside Lightfern are re-imported
+  (mtime check); invalid JSON is rejected and logged in `live/status.json`.
+- `live/feed.json` — last 100 checked items, appended after every
+  /verify-context, /verify-batch item, and Slack-feed check; atomic writes.
+- `live/status.json` — bridge heartbeat `{heartbeat_ts, mode, checks_total,
+  errors…}` rewritten ~every 1s while the bridge runs; the home view shows
+  CONNECTED vs STALE off `heartbeat_ts` (stale after ~15s).
+- `live/answers/<id>.json` — brain answers for `{"cmd":"ask"}` inbox commands.
+- `inbox/*.json` — commands written by the Lightfern views:
+  `{"cmd":"learn"|"override"|"ask", …}`; polled every 1s, applied through the
+  same functions as `POST /learn`, `POST /feed/{id}/override`, `POST /ask`,
+  then moved to `inbox/done/`.

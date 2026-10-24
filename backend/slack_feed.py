@@ -103,6 +103,29 @@ _cmd_threads = []    # threads the bot replied in (thread commands)
 _last_cmd_scan = 0.0
 CMD_SCAN_SECONDS = 5
 CMD_THREAD_TTL = 1800  # poll a bot thread for commands for 30 min
+_feed_listeners = []  # fn(item) called on every pushed/updated feed item
+                       # (used by the Lightfern bridge to mirror the feed)
+
+
+def add_feed_listener(fn) -> None:
+    """Register fn(item) — called with a copy of every feed item after it is
+    stored (_push) and after update_item rewrites its verdict. Fail-open:
+    a listener exception is logged, never raised."""
+    if fn not in _feed_listeners:
+        _feed_listeners.append(fn)
+
+
+def remove_feed_listener(fn) -> None:
+    if fn in _feed_listeners:
+        _feed_listeners.remove(fn)
+
+
+def _notify(item: dict) -> None:
+    for fn in list(_feed_listeners):
+        try:
+            fn(dict(item))
+        except Exception as e:
+            log.warning("feed listener failed: %s", e)
 
 
 def _parse_question(text):
@@ -201,6 +224,7 @@ def _push(text, source, user=None, channel=None,
                 f.write(json.dumps(item) + "\n")
         except Exception as e:
             log.warning("feed_log write failed: %s", e)
+    _notify(item)
     _audit(item)
     _maybe_reply(item)
     return item
@@ -632,8 +656,12 @@ def update_item(feed_id, res: dict) -> dict:
                 for k in ("status", "risk_level", "violations",
                           "suggested_rewrite", "advisories", "actions", "meta"):
                     i[k] = res[k]
-                return i
-    return None
+                item = dict(i)
+                break
+        else:
+            return None
+    _notify(item)
+    return item
 
 
 def record_override(feed_id, decision, phrase=None, note=None, rule_id=None) -> dict:

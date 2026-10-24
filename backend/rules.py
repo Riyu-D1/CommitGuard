@@ -252,6 +252,100 @@ def check_refund_credits(text: str, brain: dict) -> list:
     return []
 
 
+_INVOICE_NO_RE = re.compile(r"\b[A-Z]{2,4}[-\s]?\d{3,}\b")
+_DUP_LANG_RE = re.compile(
+    r"(?i)\b(already paid|duplicate|second request|paid twice|settled last|"
+    r"resending|previously paid)\b")
+
+
+def check_duplicate_invoice(text: str, brain: dict) -> list:
+    dup = _DUP_LANG_RE.search(text)
+    if not dup:
+        return []
+    out = []
+    seen = set()
+    for m in _INVOICE_NO_RE.finditer(text):
+        if m.group(0) in seen:
+            continue
+        seen.add(m.group(0))
+        out.append(_v(
+            "DUPLICATE_INVOICE", "CRITICAL",
+            f"Invoice {m.group(0)} is flagged as a possible duplicate payment request.",
+            "Verify against the payment ledger before approving — duplicate invoice fraud is common.",
+            {"brain_key": "payment_ledger",
+             "expected": "no prior payment for this invoice", "found": dup.group(0)},
+            span={"text": m.group(0), "start": m.start(), "end": m.end()},
+        ))
+    return out
+
+
+_SENDER_RE = re.compile(
+    r"(?i)(?:from|reply-to):\s*(\S+@([A-Za-z0-9.-]+\.[A-Za-z]{2,}))")
+
+
+def check_sender_domain(text: str, brain: dict) -> list:
+    known_list = brain.get("known_sender_domains", [])
+    known = {d.lower() for d in known_list}
+    contract = _find_vendor(text, brain)
+    out = []
+    seen = set()
+    for m in _SENDER_RE.finditer(text):
+        email, domain = m.group(1), m.group(2).lower()
+        if domain in known or domain in seen:
+            continue
+        seen.add(domain)
+        if contract:
+            out.append(_v(
+                "SENDER_DOMAIN_MISMATCH", "CRITICAL",
+                f"Sender domain '{domain}' claimed to be from {contract['vendor_name']} — "
+                "this is a classic supplier-impersonation pattern.",
+                "Verify the sender out-of-band before acting on this message.",
+                {"brain_key": "known_sender_domains",
+                 "expected": known_list, "found": domain},
+                span={"text": email, "start": m.start(1), "end": m.end(1)},
+            ))
+        else:
+            out.append(_v(
+                "SENDER_DOMAIN_MISMATCH", "HIGH",
+                f"Sender domain '{domain}' is not a known supplier domain — "
+                "possible impersonation/phishing.",
+                "Verify the sender out-of-band before acting on this message.",
+                {"brain_key": "known_sender_domains",
+                 "expected": known_list, "found": domain},
+                span={"text": email, "start": m.start(1), "end": m.end(1)},
+            ))
+    return out
+
+
+_URGENCY_RE = re.compile(
+    r"(?i)\b(urgent|immediately|asap|today|by eod|end of day|time-sensitive|"
+    r"before close)\b")
+_PAYDETAIL_RE = re.compile(
+    r"(?i)\b(iban|sort code|bank details|account number|updated payment|"
+    r"new account|payment details|change of bank)\b")
+
+
+def check_urgent_payment_change(text: str, brain: dict) -> list:
+    urgencies = list(_URGENCY_RE.finditer(text))
+    if not urgencies:
+        return []
+    payments = list(_PAYDETAIL_RE.finditer(text))
+    for u in urgencies:
+        for p in payments:
+            if abs(u.start() - p.start()) <= 120:
+                lo, hi = min(u.start(), p.start()), max(u.end(), p.end())
+                return [_v(
+                    "URGENT_PAYMENT_CHANGE", "CRITICAL",
+                    "Urgency combined with a payment-detail change is the #1 invoice-fraud pattern.",
+                    "Never process bank-detail changes under time pressure — verify out-of-band first.",
+                    {"brain_key": "financial_rules.fraud_controls",
+                     "expected": "no urgency+bank-change combination",
+                     "found": f"{u.group(0)} + {p.group(0)}"},
+                    span={"text": text[lo:hi], "start": lo, "end": hi},
+                )]
+    return []
+
+
 ALL_CHECKS = [
     check_payment_terms,
     check_discount_cap,
@@ -261,6 +355,9 @@ ALL_CHECKS = [
     check_large_commitment,
     check_feature_claims,
     check_refund_credits,
+    check_duplicate_invoice,
+    check_sender_domain,
+    check_urgent_payment_change,
 ]
 
 

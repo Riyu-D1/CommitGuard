@@ -4,7 +4,8 @@
     "max_unapproved_discount_percent": 10,
     "treasury_lock": "Quarterly billing disabled for cash runway optimization; enforce 50% upfront.",
     "cfo_approval_required_over_gbp": 25000,
-    "refund_or_credit_cap_gbp": 500
+    "refund_or_credit_cap_gbp": 500,
+    "fraud_controls": "Urgency + bank-detail changes always require out-of-band verification."
   },
   "signed_contracts": [
     {
@@ -40,5 +41,6 @@
   "people": {
     "cfo": "Amara Osei",
     "finance_approval_channel": "#finance-approvals"
-  }
+  },
+  "known_sender_domains": ["cloudscale.co.uk", "northwind-analytics.com", "yourcompany.com"]
 }

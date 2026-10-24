@@ -35,19 +35,51 @@
       "vendor_name": "CloudScale Ltd",
       "approved_monthly_retainer_gbp": 5000,
       "hourly_rate_gbp": 70,
-      "bank_iban": "GB29REVOLUT12345689"
+      "bank_iban": "GB29REVOLUT12345689",
+      "payment_terms": "Net-30",
+      "bank_sort_code": "20-11-33",
+      "bank_account_no": "44556677",
+      "contact_phone": "+44 20 7946 0101"
     },
     {
       "vendor_name": "Northwind Analytics",
       "approved_monthly_retainer_gbp": 3200,
       "hourly_rate_gbp": 95,
-      "bank_iban": "GB14MONODE87654321"
+      "bank_iban": "GB14MONODE87654321",
+      "payment_terms": "Net-30",
+      "bank_sort_code": "30-22-44",
+      "bank_account_no": "55667788",
+      "contact_phone": "+44 20 7946 0102"
     },
     {
       "vendor_name": "Meridian Security Ltd",
       "approved_monthly_retainer_gbp": 4200,
       "hourly_rate_gbp": 80,
-      "bank_iban": "GB77NWBK11223344"
+      "bank_iban": "GB77NWBK11223344",
+      "payment_terms": "Net-30",
+      "bank_sort_code": "40-33-55",
+      "bank_account_no": "66778899",
+      "contact_phone": "+44 20 7946 0103"
+    },
+    {
+      "vendor_name": "Pinnacle Print & Design",
+      "approved_monthly_retainer_gbp": 1800,
+      "hourly_rate_gbp": 55,
+      "bank_iban": "GB33LOYD22334455",
+      "payment_terms": "Net-30",
+      "bank_sort_code": "30-00-11",
+      "bank_account_no": "22334455",
+      "contact_phone": "+44 20 7946 0331"
+    },
+    {
+      "vendor_name": "DataFort Backup Ltd",
+      "approved_monthly_retainer_gbp": 2600,
+      "hourly_rate_gbp": 60,
+      "bank_iban": "GB88HSBC55667788",
+      "payment_terms": "Net-30",
+      "bank_sort_code": "40-22-33",
+      "bank_account_no": "55667788",
+      "contact_phone": "+44 20 7946 0332"
     }
   ],
   "engineering_status": [
@@ -162,7 +194,13 @@
         "counterparty": "Acme Corp",
         "amount_gbp": 48000,
         "due_date": "2026-11-05",
-        "status": "unpaid"
+        "status": "unpaid",
+        "owner": "Riyansh",
+        "contact": {
+          "name": "Priya Nair",
+          "email": "ap@acme-corp.example"
+        },
+        "chase_log": []
       },
       {
         "id": "INV-1049",
@@ -170,7 +208,13 @@
         "counterparty": "Initech",
         "amount_gbp": 12500,
         "due_date": "2026-11-12",
-        "status": "unpaid"
+        "status": "unpaid",
+        "owner": "Pranali",
+        "contact": {
+          "name": "Marcus Veil",
+          "email": "billing@initech.example"
+        },
+        "chase_log": []
       },
       {
         "id": "INV-1048",
@@ -178,7 +222,41 @@
         "counterparty": "Globex",
         "amount_gbp": 31000,
         "due_date": "2026-10-20",
-        "status": "overdue"
+        "status": "overdue",
+        "owner": "Darsh",
+        "contact": {
+          "name": "Sam Ortega",
+          "email": "finance@globex.example"
+        },
+        "chase_log": []
+      },
+      {
+        "id": "INV-1047",
+        "kind": "receivable",
+        "counterparty": "Soylent Ltd",
+        "amount_gbp": 7800,
+        "due_date": "2026-09-14",
+        "status": "overdue",
+        "owner": "Pranali",
+        "contact": {
+          "name": "Dana Whitfield",
+          "email": "accounts@soylent.example"
+        },
+        "chase_log": []
+      },
+      {
+        "id": "INV-1041",
+        "kind": "receivable",
+        "counterparty": "Acme Corp",
+        "amount_gbp": 22000,
+        "due_date": "2026-08-15",
+        "status": "overdue",
+        "owner": "Riyansh",
+        "contact": {
+          "name": "Priya Nair",
+          "email": "ap@acme-corp.example"
+        },
+        "chase_log": []
       },
       {
         "id": "INV-1045",
@@ -186,7 +264,13 @@
         "counterparty": "Umbrella Group",
         "amount_gbp": 9300,
         "due_date": "2026-10-02",
-        "status": "paid"
+        "status": "paid",
+        "owner": "Darsh",
+        "contact": {
+          "name": "Ren Kohl",
+          "email": "ar@umbrella.example"
+        },
+        "chase_log": []
       }
     ],
     "bank": {

@@ -150,24 +150,53 @@ def plan_actions(result: dict, brain: dict) -> list:
     people = brain.get("people", {})
     plan = {}
 
-    if crit_cats & {"PAYMENT_REDIRECTION", "URGENT_PAYMENT_CHANGE"}:
+    # Invoice references carried in violation evidence (finance checks).
+    invoice_refs = [v["evidence"]["invoice_id"] for v in violations
+                    if isinstance(v.get("evidence"), dict)
+                    and v["evidence"].get("invoice_id")]
+    spend_approvers = next(
+        (v["evidence"]["required_approvers"] for v in violations
+         if v.get("category") == "SPEND_OVER_LIMIT"
+         and isinstance(v.get("evidence"), dict)
+         and v["evidence"].get("required_approvers")), None)
+
+    hold_cats = {"PAYMENT_REDIRECTION", "URGENT_PAYMENT_CHANGE",
+                 "UNAPPROVED_PAYMENT", "NEW_VENDOR_BANK_CHANGE"}
+    if (crit_cats & hold_cats) or (cats & {"UNAPPROVED_PAYMENT",
+                                         "NEW_VENDOR_BANK_CHANGE"}):
+        hold_payload = {"violations": violations}
+        if invoice_refs:
+            hold_payload["invoices"] = invoice_refs
         plan["HOLD_PAYMENT"] = {"type": "HOLD_PAYMENT",
                                 "label": "Hold payment — do not pay",
-                                "target": None,
-                                "payload": {"violations": violations}}
+                                "target": invoice_refs[0] if invoice_refs
+                                else None,
+                                "payload": hold_payload}
         cfo = people.get("cfo")
         plan["ESCALATE"] = {"type": "ESCALATE",
                             "label": f"Escalate to {cfo}" if cfo else "Escalate to CFO",
                             "target": cfo,
                             "payload": {"violations": violations}}
 
-    if "APPROVAL_REQUIRED" in cats:
+    if cats & {"PAYMENT_REDIRECTION", "URGENT_PAYMENT_CHANGE",
+               "NEW_VENDOR_BANK_CHANGE"}:
+        plan["VERIFY_VENDOR"] = {
+            "type": "VERIFY_VENDOR",
+            "label": "Verify vendor bank details out-of-band",
+            "target": None,
+            "payload": {"violations": violations}}
+
+    if cats & {"APPROVAL_REQUIRED", "SPEND_OVER_LIMIT",
+               "UNAPPROVED_PAYMENT", "PAYMENT_OFF_CYCLE"}:
         channel = people.get("finance_approval_channel")
+        target = " + ".join(spend_approvers) if spend_approvers else channel
+        label = (f"Request approval from {target}" if spend_approvers
+                 else f"Request approval in {channel}" if channel
+                 else "Request approval")
         plan["REQUEST_APPROVAL"] = {
             "type": "REQUEST_APPROVAL",
-            "label": f"Request approval in {channel}" if channel
-                     else "Request approval",
-            "target": channel,
+            "label": label,
+            "target": target,
             "payload": {"violations": violations}}
 
     if "CONFIDENTIAL_LEAK" in cats:

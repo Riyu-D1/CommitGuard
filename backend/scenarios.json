@@ -53,5 +53,35 @@
     "label": "Slack demo — clean chatter",
     "context_type": "slack_message",
     "text": "fyi the retro moved to Thursday 3pm, usual room — agenda's in the doc"
+  },
+  "fin_spend_approval": {
+    "label": "Finance — spend needs CFO tier",
+    "context_type": "slack_message",
+    "text": "asking approval for a £12k vendor contract renewal — can I sign it off this week?"
+  },
+  "fin_vendor_bank": {
+    "label": "Finance — new vendor bank change",
+    "context_type": "slack_message",
+    "text": "new supplier Vortex Systems changed their bank details — sending £4,200 to the new account"
+  },
+  "fin_offcycle_unpaid": {
+    "label": "Finance — off-cycle unpaid invoice",
+    "context_type": "slack_message",
+    "text": "wiring out INV-1043 on Friday, it's been sitting unpaid for ages"
+  },
+  "fin_within_limit": {
+    "label": "Finance — inside self-approve tier",
+    "context_type": "slack_message",
+    "text": "signing off the £850 software renewal — under my limit, logging it now"
+  },
+  "fin_payment_run": {
+    "label": "Finance — Thursday payment run",
+    "context_type": "slack_message",
+    "text": "payment run's on Thursday this week as usual — INV-1043 is queued for it"
+  },
+  "fin_chase_receivable": {
+    "label": "Finance — chasing a receivable",
+    "context_type": "slack_message",
+    "text": "chasing Acme Corp on their overdue invoice — they promised the wire this week"
   }
 }

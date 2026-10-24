@@ -64,7 +64,59 @@
   ],
   "people": {
     "cfo": "Amara Osei",
+    "ceo": "Tom Ellery",
+    "team_lead": "Nadia Hussain",
     "finance_approval_channel": "#finance-approvals"
+  },
+  "finance": {
+    "sample_data": true,
+    "spend_approvals": [
+      {
+        "tier": "self",
+        "max_gbp": 1000,
+        "approvers": ["self"],
+        "note": "anyone may spend up to £1,000 without extra sign-off"
+      },
+      {
+        "tier": "team_lead",
+        "max_gbp": 5000,
+        "approvers": ["team_lead"],
+        "note": "spend of £1,000–£5,000 needs the team lead"
+      },
+      {
+        "tier": "cfo",
+        "max_gbp": 25000,
+        "approvers": ["cfo"],
+        "note": "spend of £5,000–£25,000 needs the CFO"
+      },
+      {
+        "tier": "exec",
+        "max_gbp": null,
+        "approvers": ["cfo", "ceo"],
+        "note": "spend over £25,000 needs CFO + CEO sign-off"
+      }
+    ],
+    "invoices": [
+      {"id": "INV-1043", "kind": "payable", "counterparty": "CloudScale Ltd", "amount_gbp": 6200, "due_date": "2026-10-28", "status": "unpaid"},
+      {"id": "INV-1044", "kind": "payable", "counterparty": "Northwind Analytics", "amount_gbp": 3200, "due_date": "2026-10-30", "status": "unpaid"},
+      {"id": "INV-1046", "kind": "payable", "counterparty": "WeWork City Road", "amount_gbp": 2800, "due_date": "2026-11-04", "status": "unpaid"},
+      {"id": "INV-1037", "kind": "payable", "counterparty": "Meridian Security Ltd", "amount_gbp": 4200, "due_date": "2026-10-10", "status": "overdue"},
+      {"id": "INV-1039", "kind": "payable", "counterparty": "Amazon Web Services", "amount_gbp": 1140, "due_date": "2026-10-15", "status": "paid"},
+      {"id": "INV-1051", "kind": "receivable", "counterparty": "Acme Corp", "amount_gbp": 48000, "due_date": "2026-11-05", "status": "unpaid"},
+      {"id": "INV-1049", "kind": "receivable", "counterparty": "Initech", "amount_gbp": 12500, "due_date": "2026-11-12", "status": "unpaid"},
+      {"id": "INV-1048", "kind": "receivable", "counterparty": "Globex", "amount_gbp": 31000, "due_date": "2026-10-20", "status": "overdue"},
+      {"id": "INV-1045", "kind": "receivable", "counterparty": "Umbrella Group", "amount_gbp": 9300, "due_date": "2026-10-02", "status": "paid"}
+    ],
+    "bank": {
+      "balance_gbp": 820000,
+      "monthly_burn_gbp": 95000,
+      "note": "runway = balance / monthly_burn — computed, never stored"
+    },
+    "payment_rules": {
+      "no_payment_to_new_vendor_without_verified_bank": "Never pay a new vendor until bank details are verified out-of-band.",
+      "no_unapproved_invoice_payments": "Only invoices marked approved may be paid; unpaid or overdue invoices need sign-off first.",
+      "payment_run_days": ["Tuesday", "Thursday"]
+    }
   },
   "known_sender_domains": ["cloudscale.co.uk", "northwind-analytics.com", "yourcompany.com", "meridian-sec.com"],
   "learned_rules": [],

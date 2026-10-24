@@ -172,6 +172,29 @@
         "Tuesday",
         "Thursday"
       ]
+    },
+    "month_end_close": {
+      "note": "SAMPLE close checklist — demo data, not real books",
+      "period": "2026-10",
+      "steps": [
+        {"id": "bank-rec", "name": "Bank reconciliation", "owner": "Darsh", "status": "reconciled", "due": "2026-10-08"},
+        {"id": "stripe-payouts", "name": "Stripe payouts reconciliation", "owner": "Darsh", "status": "reconciled", "due": "2026-10-09"},
+        {"id": "ap-accruals", "name": "AP accruals", "owner": "Pranali", "status": "in_progress", "due": "2026-10-27", "blocker": "waiting on the CloudScale Ltd invoice"},
+        {"id": "ar-review", "name": "AR / receivables review", "owner": "Riyansh", "status": "missing", "due": "2026-10-24", "blocker": "2 overdue accounts not yet chased"},
+        {"id": "payroll-journal", "name": "Payroll journal", "owner": "Pranali", "status": "reconciled", "due": "2026-10-21"},
+        {"id": "vat-return", "name": "VAT return prep", "owner": "Darsh", "status": "in_progress", "due": "2026-10-30"},
+        {"id": "cfo-signoff", "name": "CFO sign-off", "owner": "Darsh", "status": "missing", "due": "2026-10-31", "blocker": "all other steps must be reconciled first"}
+      ]
+    },
+    "payables": [
+      {"supplier": "WeWork City Road", "amount_gbp": 2800, "due_date": "2026-10-28", "note": "SAMPLE — office rent"},
+      {"supplier": "GitHub Enterprise", "amount_gbp": 450, "due_date": "2026-10-26", "note": "SAMPLE — seats subscription"},
+      {"supplier": "Notion", "amount_gbp": 240, "due_date": "2026-11-02", "note": "SAMPLE — workspace subscription"}
+    ],
+    "payroll": {
+      "monthly_gbp": 38000,
+      "pay_day": "2026-10-28",
+      "note": "SAMPLE payroll estimate — headcount x avg cost"
     }
   },
   "known_sender_domains": [

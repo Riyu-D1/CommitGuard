@@ -21,6 +21,7 @@ import brain_store
 import audit_trace
 import lightfern_bridge
 import chaser
+import close
 from llm_enrich import llm_enrich, llm_enabled, llm_polish_answer
 
 from rules import explain_policy, policy_cards
@@ -293,7 +294,8 @@ def _ask_brain(question: str) -> dict:
     if _OWES_RE.search(question or ""):
         out = chaser.ask_summary(COMPANY_BRAIN)
     else:
-        out = explain_policy(question, COMPANY_BRAIN)
+        out = (close.ask(question, COMPANY_BRAIN)
+               or explain_policy(question, COMPANY_BRAIN))
     engine = "rules"
     if out.get("matched"):
         polished = llm_polish_answer(question, out["answer"])
@@ -845,6 +847,54 @@ def chase_history(invoice_id: str):
     if res is None:
         return JSONResponse(status_code=404,
                             content={"error": f"no receivable matching '{invoice_id}'"})
+    return res
+
+
+# ---- month-end close -----------------------------------------------------
+
+
+class CloseNudgeRequest(BaseModel):
+    owner: Optional[str] = None
+
+
+@app.get("/close",
+         summary="Month-end close status",
+         description="Percent done + the missing/in-progress steps with "
+                     "owners and blockers, from finance.month_end_close "
+                     "(SAMPLE data).")
+def get_close():
+    return close.close_status(COMPANY_BRAIN)
+
+
+@app.get("/close/due-out",
+         summary="Everything due out this month",
+         description="Unpaid payable invoices + recurring bills + payroll "
+                     "due in ?month=YYYY-MM (default: current month), with "
+                     "a single total.")
+def close_due_out(month: Optional[str] = None):
+    return close.due_out(COMPANY_BRAIN, month)
+
+
+@app.get("/runway",
+         summary="Cash runway in months",
+         description="finance.bank.balance_gbp ÷ monthly_burn_gbp — "
+                     "computed live, figures cited.")
+def get_runway():
+    res = close.runway(COMPANY_BRAIN)
+    if res.get("error"):
+        return JSONResponse(status_code=404, content=res)
+    return res
+
+
+@app.post("/close/nudge",
+          summary="Draft close-chasing nudges — never sends",
+          description="{owner} optional -> a DRAFT Slack DM to whoever "
+                      "holds a missing/in-progress close step (one per "
+                      "owner when omitted). Draft only — nothing is sent.")
+def close_nudge(req: CloseNudgeRequest):
+    res = close.draft_close_nudge(COMPANY_BRAIN, owner=(req.owner if req else None))
+    if res.get("error"):
+        return JSONResponse(status_code=404, content=res)
     return res
 
 

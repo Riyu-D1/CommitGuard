@@ -1,8 +1,8 @@
-# Pranali — frontend (everything the judges see)
+# Pranali — Codex prompts (all frontend + pitch)
 
-**How to use:** each phase is ONE fenced block. Paste the ENTIRE block into your AI tool —
-it contains all the context the AI needs (it knows nothing until you paste it).
-Then verify by clicking at http://127.0.0.1:8000 (server off? run `./start.sh` from the repo root).
+**How to use:** open Codex in the repo root. Paste ONE phase's entire fenced block as a
+single message — it contains everything Codex needs. When it finishes, verify by clicking
+at http://127.0.0.1:8000 (server off? run `./start.sh` from repo root), then ship:
 
 ```
 git checkout -b pranali/phase<N> && git add -A && git commit -m "phase <N>" && git push -u origin pranali/phase<N> && gh pr create --fill
@@ -14,85 +14,101 @@ git checkout -b pranali/phase<N> && git add -A && git commit -m "phase <N>" && g
 
 ---
 
-## Phase 1 — demo/index.html polish
+## Phase 1 — complete demo UI (the flagship)
 
 ```
-You are a frontend engineer working in a git repo called CommitGuard — a pre-send compliance firewall for a hackathon.
+You are a senior frontend engineer working in the CommitGuard repository (read AGENTS.md and CONTRACT.md first). CommitGuard is a pre-send compliance firewall: a local FastAPI backend checks drafts/invoices against a company knowledge base and returns violations — each has {category, severity (LOW/MEDIUM/HIGH/CRITICAL), issue, correction, suggested_rewrite, evidence {brain_key, expected, found}, optional span {text,start,end}, optional fix}. demo/index.html is the flagship single-file demo served at http://127.0.0.1:8000 — it already works: scenario buttons from GET /scenarios, POST /verify-context, violation cards, suggested rewrite, Send disabled on CRITICAL, POST /execute-action.
 
-WHAT IT IS: a local FastAPI backend checks drafted emails/messages/invoices against a company knowledge base and returns violations — each with category, severity (LOW/MEDIUM/HIGH/CRITICAL), issue, correction, suggested_rewrite, evidence {brain_key, expected, found}, and optional span {text, start, end}. demo/index.html is a single-file HTML/CSS/JS compose-box demo served by the backend at http://127.0.0.1:8000: it loads 4 demo scenarios from GET /scenarios as buttons, POSTs the text to /verify-context, renders violation cards, shows a suggested rewrite, disables "Send" on CRITICAL, and POSTs /execute-action for fixes/escalations. It already works end-to-end.
+YOUR FILES ONLY: demo/index.html. Must remain ONE self-contained file — vanilla HTML/CSS/JS, NO frameworks, NO CDN, NO external fonts/assets (must run fully offline). Do NOT change which endpoints are called, the request/response JSON shapes, or element IDs used by the JS logic. Do NOT modify any other file.
 
-YOUR FILES ONLY: demo/index.html. Keep it ONE file, vanilla HTML/CSS/JS, no dependencies, no CDN, no external fonts (must work fully offline). Do NOT modify any other file. Do NOT change which endpoints are called or the JSON shapes used.
+TASK — elevate the UI to product-quality while keeping every existing behavior. Read the file first; keep its JS architecture (api() helper, verify(), scenario loader) intact. Improve:
 
-TASK — improve the visual design only, keeping every existing feature working:
-- Each violation card gets a left border colored by severity (grey/yellow/orange/red scale; CRITICAL = strong red)
-- Evidence renders as a compact receipt inside each card: brain key, expected value, found value — small monospace, clearly readable
-- CRITICAL result: pulsing red outline on the compose area; CLEAN: brief green check animation
-- Successful actions (fix applied, escalated, staged) show a toast notification
-- Keep the existing scenario buttons, span highlighting, "Apply all fixes", Send button states, and the "Open Inspector" link all working
-VERIFY (describe to me what to click): I will open http://127.0.0.1:8000, click all 4 scenario buttons, and check the browser console has no errors.
+1. VISUAL SYSTEM — define CSS variables for the palette up top (dark, fintech/console feel: near-black background, one accent color, severity colors as a set). System font stack only. Consistent 8px spacing scale. No purple gradients, no generic rounded-card-everything — this is a dense pro tool for finance people.
+
+2. VIOLATION CARDS — each card gets:
+   - Left border (4px) colored by severity: CRITICAL #ff3b30 solid + subtle pulse animation, HIGH #ff9500, MEDIUM #ffcc00, LOW #8e8e93
+   - Header row: severity chip (small, colored bg, uppercase, letterspaced) + category in monospace
+   - Body: issue text (readable), then correction prefixed with a → in the accent color
+   - Evidence receipt: a compact bordered box in small monospace showing three lines — "brain: <brain_key>" / "expected: <expected>" / "found: <found>" — this is the "receipt" judges photograph, make it look like a receipt/ticket
+   - If violation.fix exists: an inline "apply fix" mini-button that replaces the span text in the draft and re-verifies
+
+3. SPAN HIGHLIGHTS — when violations carry span{start,end}, render a read-only preview under the compose box with those ranges underlined in the severity color (squiggly or solid underline + tooltip with the category).
+
+4. STATES — compose area border pulses red on CRITICAL; CLEAN shows a green check + "Clear to send" state; Send button enabled ONLY when status is CLEAN (CRITICAL shows it blocked with a lock icon); backend unreachable (fetch throws) → persistent "backend offline — checks unavailable" banner + health dot turns red.
+
+5. ACTIONS — buttons: "Apply all fixes" (uses top-level suggested_rewrite), "Escalate to CFO" (ESCALATE_FRAUD), "Stage in Round" (STAGE_INVOICE, only on invoice context), "Send" (SEND_APPROVED), "Override" (APPROVE_OVERRIDE — prompts for a reason first). Every successful action → toast notification bottom-right, auto-dismiss ~3s, dark style with accent border.
+
+6. DETAILS — Cmd/Ctrl+Enter triggers verify; scenario buttons show active state; top bar shows product name "CommitGuard" + a live health dot (GET /health every 15s, green=rules, blue=rules+llm, red=offline) + latency from meta after each verify; "Open Inspector" link top-right → /inspector.html.
+
+VERIFY — tell me exactly what to click; I will open http://127.0.0.1:8000, click all 4 scenario buttons, use every action button, and check the browser console has zero errors.
 ```
 
-## Phase 2 — inspector + simulator
+## Phase 2 — inspector + simulator polish
 
 ```
-You are a frontend engineer working in a git repo called CommitGuard — a pre-send compliance firewall. (Context: local FastAPI backend checks drafts/invoices against backend/company_brain.json, returns violations; frontend is single-file vanilla HTML/JS at 127.0.0.1:8000.)
+You are a senior frontend engineer working in the CommitGuard repository (read AGENTS.md and CONTRACT.md first). Frontend is single-file vanilla HTML/JS served from a local FastAPI backend at 127.0.0.1:8000.
 
-YOUR FILES ONLY: demo/inspector.html and plugin/simulator.html. Do NOT modify any other file — especially NOT plugin/adapter.js (its exported function names are a contract other code depends on).
+YOUR FILES ONLY: demo/inspector.html and plugin/simulator.html. Do NOT modify any other file — especially NOT plugin/adapter.js (its exported names are a hard contract).
 
-TASK — visual restyle only:
-1. demo/inspector.html already exists: it shows the company brain (GET /brain), a live audit trail (GET /audit-log, auto-refreshes), and health status (GET /health). Restyle it to match demo/index.html — open that file first and reuse its fonts, colors, card styling, and spacing.
-2. plugin/simulator.html already exists: it's a mock of the real plugin UI that calls the same backend via plugin/adapter.js. Restyle it the same way.
-Keep ALL JavaScript logic, fetch calls, element IDs, and adapter.js usage byte-for-byte identical — change only CSS and non-functional markup.
-VERIFY: I will open http://127.0.0.1:8000/inspector.html (should show brain cards + audit table) and plugin/simulator.html — no console errors.
+TASK — restyle both to match demo/index.html (read it first and reuse its design tokens — palette variables, font stack, spacing scale, card style, severity colors, toast style):
+
+1. demo/inspector.html — the compliance console. It shows the company brain (GET /brain) as readable grouped cards (financial_rules, signed_contracts with IBANs masked like GB29••••5689, engineering_status, people, known_sender_domains), a live audit trail (GET /audit-log?limit=20, auto-refresh every 4s, newest first, each row showing action_type + result + timestamp in monospace), and a health header (GET /health every 15s — engine mode, check count, green/red dot). Add a "← Back to demo" link. Keep ALL fetch calls and JS logic identical — only CSS/layout changes.
+2. plugin/simulator.html — the plugin-UX mock: same restyle. Its JS calls plugin/adapter.js — keep every adapter call, element ID, and event handler byte-for-byte identical.
+
+VERIFY: I will open http://127.0.0.1:8000/inspector.html (brain cards + live audit rows visible) and plugin/simulator.html — both must look like the same product family as the demo, zero console errors.
 ```
 
-## Phase 3 — pitch + submission
+## Phase 3 — pitch package
 
 ```
-You are a technical writer working in a git repo called CommitGuard — a pre-send compliance firewall built for the Lightfern "Company Brain" hackathon, competing in the Round Treasury Finance/Ops track.
+You are a technical writer working in the CommitGuard repository (read AGENTS.md first). CommitGuard is a pre-send compliance firewall entered in the Round Treasury Finance/Ops track at the Lightfern "Company Brain" hackathon: deterministic rules check outgoing drafts and incoming invoices against a company brain before anything is sent/paid — catching payment-term violations, discount-cap breaches, bank-detail mismatches (payment-redirection fraud — UK invoice/mandate fraud ≈ £41M/yr), contract overages, and promises engineering hasn't shipped. Everything runs offline on localhost; violations cite evidence; actions escalate/stage/log with an audit trail.
 
-WHAT IT DOES: before an employee sends an email or pays an invoice, deterministic rules check the text against a company knowledge base and flag violations (payment terms over policy, discounts over cap, invoice bank details that don't match the signed contract = payment-redirection fraud, features promised that engineering hasn't shipped). Violations cite evidence and offer one-click fixes or actions (stage in a Round-style approval queue, escalate to CFO, audit log). UK invoice/mandate fraud costs businesses ~£41M/year. Runs fully offline on localhost; optional OpenAI enrichment.
+YOUR FILES ONLY: pitch/ (submission.md, script.md, one-pager.html, rehearsal-sheet.md — all exist). Do NOT modify any other file.
 
-YOUR FILES ONLY: pitch/ folder (submission.md, script.md, one-pager.html, rehearsal-sheet.md all exist). Do NOT modify any other file.
+TASK — polish all four to submission quality:
 
-TASK — polish the existing files:
-1. pitch/submission.md — the hackathon submission blurb: tighten to under 200 words, lead with the fraud scenario and "pre-send firewall" positioning, keep the £41M stat and the "Round catches it in the ledger, we catch it at the keyboard" line.
-2. pitch/script.md — the 90-second demo script: check timing adds to ~90s, tighten speaker lines.
-3. pitch/one-pager.html — the printable judge handout: verify it fits one A4 page in print preview, tighten text if it overflows.
-4. pitch/rehearsal-sheet.md — must list the 4-scenario click order (sales email → vendor invoice → support reply → clean pass) with one-line judge-facing narration per step.
-VERIFY: I will open pitch/one-pager.html and print-preview it (must be 1 page), and read submission.md aloud (under 60 seconds).
+1. pitch/submission.md — the hackathon submission text, ≤200 words total. Structure: one-line hook ("Lightfern finishes your sentences; CommitGuard makes sure you can stand behind them"), the fraud-scenario lead (invoice with changed bank details caught before payment), the three capabilities (detect / fix / act), why it fits Round Treasury (upstream of their ledger-side fraud checks), tech honesty line (deterministic rules = auditable + offline; optional LLM enrichment), the £41M stat. Tight, confident, no filler.
+
+2. pitch/script.md — the 90-second demo script. Must total ~90 seconds spoken: 10s hook, then the 4-scenario walkthrough with exact one-line narration per click (sales email 20s → vendor invoice 25s → support reply 15s → clean pass 10s), inspector/audit close 10s. Write what the presenter says AND what they click, per beat.
+
+3. pitch/one-pager.html — printable A4 portrait judge handout (light theme, system fonts, prints cleanly, no external assets): product name + one-liner, 3 bullet "what it catches", mini diagram text flow (draft → rules → brain → verdict), the £41M stat, "rules engine, not a black-box model" differentiator, audit-trail receipt mention, QR-less link text 127.0.0.1:8000. Must fit ONE page in print preview — trim content until it does.
+
+4. pitch/rehearsal-sheet.md — run-of-show: the 4-scenario click order, one judge-facing line per step, the fallback line if wifi/API fails ("everything you're seeing runs locally — no network needed"), the two hardest judge questions with their answers (Q: "why not just an LLM?" A: auditable, deterministic, offline, <5ms — LLM is optional enrichment. Q: "doesn't Round already do fraud checks?" A: Round catches it in the ledger; we catch it at the keyboard before it enters the system).
+
+VERIFY: I will print-preview one-pager.html (must be 1 page) and read submission.md aloud (under 60 seconds).
 ```
 
 ## Phase 4 — video + submit (mostly you, not the agent)
 
 ```
-- ~14:00 record a 2-min backup video: clean run of all 4 scenarios + Inspector page (QuickTime screen record)
-- 14:30 rehearse the pitch twice using pitch/rehearsal-sheet.md
+- ~14:00 record a 2-min backup video: clean run of all 4 scenarios + Inspector (QuickTime screen record, Cmd+Shift+5)
+- 14:30 rehearse the pitch twice using pitch/rehearsal-sheet.md — you deliver it
 - 15:45 airplane-mode test: wifi OFF → demo must still fully work → tell Riyansh immediately if not
 - before 16:00 paste pitch/submission.md into the submission form — BEFORE the deadline, not at it
-- Optional agent prompt: "In pitch/one-pager.html update the stats block to: <paste Darsh's bench numbers>"
+- Optional Codex prompt if needed: "In pitch/one-pager.html update the stats block to: <paste Darsh's bench.py numbers>"
 ```
 
 ## Conditional — real Lightfern plugin (ONLY if Riyansh says GO)
 
 ```
-You are a frontend engineer working in a git repo called CommitGuard — a pre-send compliance firewall. (Context: local backend at 127.0.0.1:8000 exposes POST /verify-context returning violations and POST /execute-action; plugin/simulator.html shows the exact intended UI; plugin/adapter.js wraps the HTTP calls — keep its exported names identical.)
+You are a senior frontend engineer working in the CommitGuard repository (read AGENTS.md and CONTRACT.md first). The Lightfern plugin runtime hosts our real integration. plugin/simulator.html is the exact intended UX; plugin/adapter.js wraps all backend HTTP calls (verifyContext, executeAction, debounce, BASE_URL) — do NOT rename its exports.
 
-TASK: port CommitGuard into the Lightfern plugin runtime using these host APIs:
-- entry file: [RIYANSH FILLS]
-- read draft text: [RIYANSH FILLS]
-- write/apply text: [RIYANSH FILLS]
-- render UI surface: [RIYANSH FILLS]
-- draft-change event: [RIYANSH FILLS]
-Create plugin/ files per the SDK's expected structure: same violation-card UI as the simulator, calls adapter.verifyContext on draft change (debounced 400ms), CRITICAL severity blocks send, action buttons call adapter.executeAction.
-VERIFY: loads in the host OR passes their validator — screenshot to Riyansh.
+TASK: port CommitGuard into the Lightfern plugin using these host APIs (Riyansh fills the brackets from the SDK demo):
+- plugin entry file + manifest format: [SDK]
+- read current draft text: [SDK]
+- write/apply text into draft: [SDK]
+- render UI surface (panel/card/notification): [SDK]
+- draft-change event subscription: [SDK]
+
+Create the plugin/ files the SDK expects. Behavior: on draft change (debounce 400ms) call adapter.verifyContext(text, contextType) → render the same violation-card UI as the simulator in the host's surface → severity CRITICAL disables/intercepts send if the SDK allows, otherwise renders a blocking banner → action buttons call adapter.executeAction → "apply fix" writes the fix/suggested_rewrite back into the draft via the SDK's apply API. Backend unreachable → show "offline" state, never crash.
+VERIFY: the plugin loads in the host OR passes their build/lint validator — screenshot or output to Riyansh.
 ```
 
 **If the plugin runtime can't reach localhost** — paste this instead:
 
 ```
-You are a frontend engineer working in a git repo called CommitGuard — a pre-send compliance firewall. The Lightfern plugin sandbox blocks fetch to localhost, so the deterministic engine must be ported INTO the plugin.
+You are a senior engineer working in the CommitGuard repository. The Lightfern plugin sandbox blocks network access to localhost, so the deterministic engine must run INSIDE the plugin.
 
-TASK: create plugin/rules.js — a JavaScript port of backend/rules.py's checks (read that file first; copy the same regexes and the same violation shape: category, severity, issue, correction, suggested_rewrite, evidence{brain_key,expected,found}, span{text,start,end}, fix). Inline backend/company_brain.json as a JS object export. The plugin then calls runRules(draftText, brain) directly — zero backend dependency.
-VERIFY: run `node plugin/rules.js` (or a small test script) against the 4 scenario texts from backend/scenarios.json — violations must match what the Python engine returns for each scenario.
+TASK: create plugin/rules.js — a faithful JavaScript port of backend/rules.py (read that file first): same check functions, same regexes, same violation shape {category, severity, issue, correction, suggested_rewrite, evidence{brain_key,expected,found}, span{text,start,end}, fix}, same ALL_CHECKS registry, run_rules(text, brain, context_type), risk_level(), apply_fixes(). Also create plugin/brain.js exporting the contents of backend/company_brain.json as a JS object. CommonJS module.exports at the bottom so `node` can run it directly.
+VERIFY: run `node -e "const r=require('./plugin/rules.js');const b=require('./plugin/brain.js');const s=require('./backend/scenarios.json');for(const [k,v] of Object.entries(s))console.log(k, r.run_rules(v.text,b,v.context_type).map(x=>x.category))"` — output must match the Python engine's categories per scenario.
 ```

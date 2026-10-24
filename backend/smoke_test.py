@@ -230,6 +230,22 @@ for _name, _q, _want in [
         failures.append(f"{_name}: matched={_res['matched']} (want {_want}) "
                         f"sources_ok={_src_ok}")
 
+# darsh/fin-check: spend-approval questions must answer with the tier model.
+# The flat '£5k -> CFO' note hid the team-lead band and the CFO+CEO exec band.
+for _name, _q, _need in [
+    ("ask_spend_exec", "can I approve a £30,000 purchase?",
+     ("Darsh", "Riyansh")),
+    ("ask_spend_teamlead", "do I need approval to buy a £3,000 laptop?",
+     ("Pranali",)),
+    ("ask_headline_tiers", "what are the rules?", ("Darsh + Riyansh",)),
+]:
+    _r = rules.explain_policy(_q, main.COMPANY_BRAIN)
+    _tier_ok2 = _r["matched"] and all(s in _r["answer"] for s in _need)
+    print(f"\n=== {_name}: {'PASS' if _tier_ok2 else 'FAIL'}")
+    print(f"  A: {_r['answer']}")
+    if not _tier_ok2:
+        failures.append(f"{_name}: answer missing {_need}: {_r['answer']}")
+
 # darsh/hands: learned exceptions — suppress exactly one category for one
 # phrase, on a temp brain copy; the real brain file must be untouched.
 _real_brain2 = (Path(main.BASE) / "company_brain.json").read_text()

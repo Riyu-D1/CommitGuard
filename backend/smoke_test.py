@@ -318,9 +318,9 @@ print(f"\n=== unit_amount_parser: {'PASS' if _unit_ok else 'FAIL'}")
 _tier_ok = True
 for _amt, _want_tier, _want_names in [
     (500, "self", ["self"]),
-    (3000, "team_lead", ["Nadia Hussain"]),
-    (12000, "cfo", ["Amara Osei"]),
-    (60000, "exec", ["Amara Osei", "Tom Ellery"]),
+    (3000, "team_lead", ["Pranali"]),
+    (12000, "cfo", ["Darsh"]),
+    (60000, "exec", ["Darsh", "Riyansh"]),
 ]:
     _tier = rules.spend_tier(_amt, main.COMPANY_BRAIN)
     _got = (_tier["tier"], _tier["approvers"]) if _tier else (None, None)

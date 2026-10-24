@@ -162,6 +162,55 @@ if not _lr_ok:
     failures.append("rule_learned: expected LEARNED_RULE hit + idempotent "
                     "re-add + real brain untouched")
 
+# darsh/onboarding: explain_policy answers must be grounded — every cited
+# brain_key must actually resolve inside company_brain.json.
+import re  # noqa: E402
+
+
+def _brain_has(brain, key):
+    """Resolve 'a.b.c', 'a.b[Name]' and 'a.b[0]' style keys against the brain."""
+    cur = brain
+    for part in (p for p in re.split(r"[.\[\]]", key) if p):
+        if isinstance(cur, dict):
+            if part not in cur:
+                return False
+            cur = cur[part]
+        elif isinstance(cur, list):
+            hit = cur[int(part)] if part.isdigit() and int(part) < len(cur) \
+                else next((i for i in cur if isinstance(i, dict)
+                           and part in (i.get("vendor_name"), i.get("feature"),
+                                        i.get("id"))), None)
+            if hit is None:
+                return False
+            cur = hit
+        else:
+            return False
+    return True
+
+
+for _name, _q, _want in [
+    ("onboarding_discount", "can I give a 20% discount?", True),
+    ("onboarding_seat_price", "what's the lowest price per seat?", True),
+    ("onboarding_expense", "do I need approval to expense £6,000?", True),
+    ("onboarding_clientlist", "can I send the client list to an investor?", True),
+    ("onboarding_bank_change", "a vendor sent a change of bank details — "
+                               "what do I do?", True),
+    ("onboarding_unknown", "does the office have a coffee machine?", False),
+]:
+    _res = rules.explain_policy(_q, main.COMPANY_BRAIN)
+    _src_ok = all(_brain_has(main.COMPANY_BRAIN, s["brain_key"])
+                  for s in _res["sources"])
+    _ok = (_res["matched"] == _want and bool(_res["answer"])
+           and _src_ok and (_res["sources"] or not _want))
+    print(f"\n=== {_name}: {'PASS' if _ok else 'FAIL'}")
+    print(f"  Q: {_q}")
+    print(f"  A: {_res['answer']}")
+    for s in _res["sources"]:
+        print(f"  source: {s['brain_key']}")
+    if not _ok:
+        failures.append(f"{_name}: matched={_res['matched']} (want {_want}) "
+                        f"sources_ok={_src_ok}")
+
 if failures:
     print("\nFAILURES:")
     for f in failures:

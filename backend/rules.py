@@ -627,3 +627,236 @@ def apply_fixes(text: str, violations: list) -> str:
         if span and fix and span.get("start") is not None:
             out = out[:span["start"]] + fix + out[span["end"]:]
     return out
+
+
+def explain_policy(question: str, brain: dict) -> dict:
+    """Answer a 'what are the rules?' question from the brain — no LLM.
+
+    Returns {"answer": str, "sources": [{"brain_key", "value"}], "matched": bool}.
+    """
+    q = question.lower()
+    fin = brain.get("financial_rules", {})
+    pol = brain.get("internal_policies", {})
+    people = brain.get("people", {})
+    channel = people.get("finance_approval_channel", "#finance-approvals")
+
+    def _ans(answer, *sources):
+        return {"answer": answer,
+                "sources": [{"brain_key": k, "value": v} for k, v in sources],
+                "matched": True}
+
+    learned = brain.get("learned_rules", [])
+    if any(k in q for k in ("learned", "taught it", "teach it")) or any(
+            isinstance(r, dict) and r.get("phrase")
+            and r["phrase"].lower() in q for r in learned):
+        if learned:
+            listing = "; ".join(f"'{r.get('phrase')}' ({r.get('severity', '?')})"
+                                for r in learned[:5])
+            return _ans(f"Rules learned at runtime: {listing}.",
+                        ("learned_rules", learned))
+        return _ans("No learned rules yet — humans can add them and they're "
+                    "enforced immediately.", ("learned_rules", learned))
+
+    if any(k in q for k in ("bank", "iban", "sort code", "account number",
+                            "payment details", "change of bank")):
+        return _ans(fin.get("fraud_controls", "Verify bank changes out-of-band.")
+                    + " Always check the IBAN against the signed contract.",
+                    ("financial_rules.fraud_controls", fin.get("fraud_controls")),
+                    ("signed_contracts",
+                     [c["vendor_name"] for c in brain.get("signed_contracts", [])]))
+
+    if any(k in q for k in ("client list", "customer list", "confidential",
+                            "customer name", "revenue figure", "leak")):
+        return _ans(pol.get("confidential_data", "Keep customer data private."),
+                    ("internal_policies.confidential_data",
+                     pol.get("confidential_data")),
+                    ("company.customers",
+                     brain.get("company", {}).get("customers", [])))
+
+    if any(k in q for k in ("seat", "price floor", "pricing", "per-seat",
+                            "plan price", "cheaper")):
+        plans = pol.get("pricing_floor_gbp_per_seat", {})
+        listing = ", ".join(f"{p} £{v}/seat" for p, v in plans.items())
+        return _ans(f"Never quote below the per-seat floor: {listing}.",
+                    ("internal_policies.pricing_floor_gbp_per_seat", plans))
+
+    if any(k in q for k in ("discount", "margin", "% off", "percent off")):
+        cap = fin.get("max_unapproved_discount_percent")
+        return _ans(f"Discounts are capped at {cap}% — anything bigger needs "
+                    f"approval in {channel}.",
+                    ("financial_rules.max_unapproved_discount_percent", cap))
+
+    if any(k in q for k in ("quarterly", "billing", "treasury")):
+        return _ans(fin.get("treasury_lock", "Quarterly billing is disabled."),
+                    ("financial_rules.treasury_lock", fin.get("treasury_lock")))
+
+    if any(k in q for k in ("payment term", "net-", "net ", "terms")):
+        return _ans(f"Payment terms are capped at "
+                    f"{fin.get('max_payment_terms')} — extended terms need "
+                    "50% upfront.",
+                    ("financial_rules.max_payment_terms",
+                     fin.get("max_payment_terms")))
+
+    if any(k in q for k in ("refund", "credit note", "compensation",
+                            "service credit")):
+        cap = fin.get("refund_or_credit_cap_gbp")
+        return _ans(f"Refunds or credits over £{cap} need approval first.",
+                    ("financial_rules.refund_or_credit_cap_gbp", cap))
+
+    if any(k in q for k in ("expense", "spend", "purchase", "buy",
+                            "company card", "corporate card")):
+        lim = pol.get("expense_approval_limit_gbp")
+        return _ans(f"Any spend over £{lim:,} needs CFO approval first.",
+                    ("internal_policies.expense_approval_limit_gbp", lim),
+                    ("internal_policies.expense_approval_note",
+                     pol.get("expense_approval_note")))
+
+    if any(k in q for k in ("approval", "approve", "commitment", "sign-off",
+                            "signoff")):
+        thr = fin.get("cfo_approval_required_over_gbp")
+        return _ans(f"Commitments over £{thr:,} need CFO approval "
+                    f"({people.get('cfo', 'the CFO')}) before sending.",
+                    ("financial_rules.cfo_approval_required_over_gbp", thr))
+
+    if any(k in q for k in ("contract", "vendor", "supplier", "retainer",
+                            "hourly rate")):
+        cs = brain.get("signed_contracts", [])
+        listing = "; ".join(
+            f"{c['vendor_name']}: £{c['approved_monthly_retainer_gbp']:,}/mo, "
+            f"£{c['hourly_rate_gbp']}/hr, IBAN {c['bank_iban']}" for c in cs)
+        return _ans(f"Signed contracts — {listing}.", ("signed_contracts", cs))
+
+    if any(k in q for k in ("engineering", "feature", "status", "soc 2",
+                            "sso", "saml", "roadmap", "shipped", "is live",
+                            "launched")):
+        es = brain.get("engineering_status", [])
+        listing = "; ".join(f"{i['feature']} — {i['status']}" for i in es)
+        return _ans(f"Engineering status — {listing}.",
+                    ("engineering_status", es))
+
+    if any(k in q for k in ("domain", "sender", "email", "phish",
+                            "impersonat")):
+        doms = brain.get("known_sender_domains", [])
+        return _ans("Supplier email only counts from: " + ", ".join(doms)
+                    + " — anything else is a possible impersonation.",
+                    ("known_sender_domains", doms))
+
+    if any(k in q for k in ("fraud", "scam", "duplicate", "already paid",
+                            "paid twice", "urgent")):
+        return _ans(fin.get("fraud_controls", "Verify suspicious payment "
+                            "requests out-of-band."),
+                    ("financial_rules.fraud_controls",
+                     fin.get("fraud_controls")))
+
+    if any(k in q for k in ("rule", "rules", "policy", "policies", "allowed",
+                            "not allowed")):
+        return _ans("Headline rules: Net-30 terms max, discounts "
+                    f"≤{fin.get('max_unapproved_discount_percent')}%, monthly "
+                    "billing only, spend over "
+                    f"£{pol.get('expense_approval_limit_gbp', 0):,} needs CFO "
+                    "approval, per-seat pricing floors, and customer names "
+                    "never sit next to revenue figures.",
+                    ("financial_rules", fin),
+                    ("internal_policies", pol),
+                    ("company", brain.get("company", {})))
+
+    return {"answer": "Not in the company brain yet. Ask #finance-approvals",
+            "sources": [], "matched": False}
+
+
+def policy_cards(brain: dict) -> list:
+    """One card per policy family, generated from the brain (not hardcoded)."""
+    fin = brain.get("financial_rules", {})
+    pol = brain.get("internal_policies", {})
+    people = brain.get("people", {})
+    channel = people.get("finance_approval_channel", "#finance-approvals")
+    cards = []
+
+    if "max_payment_terms" in fin:
+        cards.append({"title": "Payment terms",
+                      "rule": f"Terms capped at {fin['max_payment_terms']}; "
+                              "extended terms need 50% upfront.",
+                      "brain_key": "financial_rules.max_payment_terms",
+                      "example_violation": "Offering Net-60 to close a deal."})
+    if "max_unapproved_discount_percent" in fin:
+        cap = fin["max_unapproved_discount_percent"]
+        cards.append({"title": "Discount cap",
+                      "rule": f"Discounts above {cap}% need approval in "
+                              f"{channel}.",
+                      "brain_key": "financial_rules.max_unapproved_discount_percent",
+                      "example_violation": "Promising a 15% discount without "
+                                           "sign-off."})
+    if "treasury_lock" in fin:
+        cards.append({"title": "Treasury lock",
+                      "rule": fin["treasury_lock"],
+                      "brain_key": "financial_rules.treasury_lock",
+                      "example_violation": "Offering quarterly billing."})
+    if "cfo_approval_required_over_gbp" in fin:
+        thr = fin["cfo_approval_required_over_gbp"]
+        cards.append({"title": "Commitment approval",
+                      "rule": f"Commitments over £{thr:,} need CFO approval.",
+                      "brain_key": "financial_rules.cfo_approval_required_over_gbp",
+                      "example_violation": "Confirming a £30k deal directly."})
+    if "refund_or_credit_cap_gbp" in fin:
+        cap = fin["refund_or_credit_cap_gbp"]
+        cards.append({"title": "Refund cap",
+                      "rule": f"Refunds or credits over £{cap} need approval.",
+                      "brain_key": "financial_rules.refund_or_credit_cap_gbp",
+                      "example_violation": "Offering a £900 refund."})
+    if "fraud_controls" in fin:
+        cards.append({"title": "Fraud controls",
+                      "rule": fin["fraud_controls"],
+                      "brain_key": "financial_rules.fraud_controls",
+                      "example_violation": "Processing an urgent bank-detail "
+                                           "change."})
+    if "expense_approval_limit_gbp" in pol:
+        cards.append({"title": "Expense limit",
+                      "rule": pol.get("expense_approval_note")
+                      or f"Spend over £{pol['expense_approval_limit_gbp']:,} "
+                         "needs CFO approval.",
+                      "brain_key": "internal_policies.expense_approval_limit_gbp",
+                      "example_violation": "Putting a £6,800 tool on the "
+                                           "company card."})
+    if "pricing_floor_gbp_per_seat" in pol:
+        plans = pol["pricing_floor_gbp_per_seat"]
+        listing = ", ".join(f"{p} £{v}/seat" for p, v in plans.items())
+        cards.append({"title": "Pricing floor",
+                      "rule": f"Never quote below the per-seat floor: "
+                              f"{listing}.",
+                      "brain_key": "internal_policies.pricing_floor_gbp_per_seat",
+                      "example_violation": "Quoting Enterprise at £85/seat."})
+    if "confidential_data" in pol:
+        cards.append({"title": "Confidential data",
+                      "rule": pol["confidential_data"],
+                      "brain_key": "internal_policies.confidential_data",
+                      "example_violation": "Posting 'Acme Corp pays £48k/yr' "
+                                           "in a public channel."})
+    if brain.get("known_sender_domains"):
+        cards.append({"title": "Trusted senders",
+                      "rule": "Supplier email only counts from: "
+                              + ", ".join(brain["known_sender_domains"]) + ".",
+                      "brain_key": "known_sender_domains",
+                      "example_violation": "An invoice from "
+                                           "@cloudscale-pay.com."})
+    for c in brain.get("signed_contracts", []):
+        cards.append({"title": f"Contract — {c['vendor_name']}",
+                      "rule": f"Retainer £{c['approved_monthly_retainer_gbp']:,}"
+                              f"/mo, £{c['hourly_rate_gbp']}/hr, IBAN "
+                              f"{c['bank_iban']}.",
+                      "brain_key": f"signed_contracts[{c['vendor_name']}]",
+                      "example_violation": f"Paying {c['vendor_name']} to a "
+                                           "different IBAN."})
+    for i in brain.get("engineering_status", []):
+        cards.append({"title": f"Status — {i['feature']}",
+                      "rule": i["status"],
+                      "brain_key": f"engineering_status[{i['feature']}]",
+                      "example_violation": f"Claiming '{i['feature']}' is "
+                                           "done and live."})
+    for r in brain.get("learned_rules", []):
+        cards.append({"title": f"Learned — '{r.get('phrase')}'",
+                      "rule": r.get("issue") or f"Learned rule on "
+                              f"'{r.get('phrase')}'.",
+                      "brain_key": f"learned_rules[{r.get('id')}]",
+                      "example_violation": f"Saying '{r.get('phrase')}' in a "
+                                           "draft."})
+    return cards

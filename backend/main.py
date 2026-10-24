@@ -19,7 +19,6 @@ from llm_enrich import llm_enrich, llm_enabled
 BASE = Path(__file__).parent
 BRAIN_PATH = BASE / "company_brain.json"
 
-
 @asynccontextmanager
 async def lifespan(_app):
     slack_feed.start(verify_fn=_verify, scenarios=SCENARIOS)
@@ -75,6 +74,21 @@ class ActionRequest(BaseModel):
 class InjectRequest(BaseModel):
     text: str
     user: Optional[str] = None
+
+
+class LearnRequest(BaseModel):
+    phrase: str
+    category: str = "LEARNED_RULE"
+    severity: str = "HIGH"
+    issue: Optional[str] = None
+    correction: Optional[str] = None
+    source_feed_id: Optional[int] = None
+
+
+class OverrideRequest(BaseModel):
+    decision: str
+    phrase: Optional[str] = None
+    note: Optional[str] = None
 
 
 VALID_CONTEXT_TYPES = {"outgoing_email", "slack_message", "incoming_invoice", "general"}
@@ -191,6 +205,65 @@ def reload_brain():
     return {"reloaded": True, "keys": list(COMPANY_BRAIN.keys())}
 
 
+LEARN_SEVERITIES = {"MEDIUM", "HIGH", "CRITICAL"}
+
+
+def _learn(phrase, category, severity, issue, correction, source_feed_id):
+    """Shared /learn logic. Returns (stored_rule, error_response)."""
+    phrase = (phrase or "").strip()
+    if not (3 <= len(phrase) <= 120):
+        return None, JSONResponse(
+            status_code=422,
+            content={"error": "phrase is required and must be 3-120 chars"})
+    sev = (severity or "HIGH").strip().upper()
+    if sev not in LEARN_SEVERITIES:
+        return None, JSONResponse(
+            status_code=422,
+            content={"error": f"severity must be one of {sorted(LEARN_SEVERITIES)}"})
+    cat = (category or "LEARNED_RULE").strip().upper()
+    if not cat:
+        return None, JSONResponse(status_code=422,
+                                  content={"error": "category must be non-empty"})
+    stored = rules.add_learned_rule({
+        "phrase": phrase,
+        "category": cat,
+        "severity": sev,
+        "issue": (issue or "").strip() or
+                 f"Learned rule: '{phrase}' was flagged by a human reviewer.",
+        "correction": (correction or "").strip() or
+                      f"Remove or rephrase '{phrase}', or get explicit approval.",
+        "source_feed_id": source_feed_id,
+    })
+    global COMPANY_BRAIN
+    new_brain = load_brain()
+    if new_brain:
+        COMPANY_BRAIN = new_brain
+    return stored, None
+
+
+@app.post("/learn",
+          summary="Teach the engine a new rule from a human correction",
+          description="Stores {phrase, category, severity, issue, correction} in "
+                      "brain.learned_rules (deduped on lower-cased phrase), reloads "
+                      "the in-memory brain, and returns the stored rule. From the "
+                      "next request on, any message containing the phrase is "
+                      "flagged — this is the 'learns and updates itself' path.")
+def learn(req: LearnRequest):
+    stored, err = _learn(req.phrase, req.category, req.severity,
+                         req.issue, req.correction, req.source_feed_id)
+    if err:
+        return err
+    return JSONResponse(status_code=201, content=stored)
+
+
+@app.get("/brain/learned",
+         summary="List learned rules, newest first",
+         description="Returns brain.learned_rules — every rule taught via "
+                     "/learn or /feed/{id}/override — newest first.")
+def brain_learned():
+    return list(reversed(COMPANY_BRAIN.get("learned_rules", [])))
+
+
 @app.get("/audit-log",
          summary="Read the audit trail, newest first",
          description="Returns entries from audit_log.jsonl, newest first. Optional "
@@ -245,6 +318,49 @@ def feed_inject(req: InjectRequest):
     if item is None:
         return JSONResponse(status_code=503, content={"error": "feed pipeline not started"})
     return item
+
+
+@app.post("/feed/{feed_id}/override",
+          summary="Human verdict on a feed item: 'missed' teaches a rule",
+          description="decision='missed' requires phrase: it learns a rule "
+                      "(same as POST /learn with source_feed_id=id), re-runs the "
+                      "item's text, and flips the stored item to its new verdict — "
+                      "the UI can show it go CLEAN -> caught. "
+                      "decision='false_positive' just records the verdict. Either "
+                      "way an override record is appended to feed_log.jsonl and "
+                      "returned as 'override'.")
+def feed_override(feed_id: int, req: OverrideRequest):
+    item = slack_feed.get_item(feed_id)
+    if item is None:
+        return JSONResponse(status_code=404,
+                            content={"error": f"feed item {feed_id} not found"})
+    decision = (req.decision or "").strip().lower()
+    if decision not in {"missed", "false_positive"}:
+        return JSONResponse(status_code=422, content={
+            "error": "decision must be 'missed' or 'false_positive'"})
+    rule = recheck = None
+    if decision == "missed":
+        if not req.phrase or not req.phrase.strip():
+            return JSONResponse(status_code=422, content={
+                "error": "phrase is required when decision is 'missed'"})
+        rule, err = _learn(req.phrase, "LEARNED_RULE", "HIGH", None, None, feed_id)
+        if err:
+            return err
+        recheck = _verify(item["text"], item.get("context_type", "slack_message"))
+        slack_feed.update_item(feed_id, recheck)
+    override = slack_feed.record_override(
+        feed_id, decision, phrase=req.phrase, note=req.note,
+        rule_id=(rule or {}).get("id"))
+    return {"override": override, "rule": rule, "recheck": recheck}
+
+
+@app.get("/slack/status",
+         summary="Slack monitor mode and health",
+         description="Returns {mode: 'slack' | 'simulated', channel, "
+                     "token: 'set' | 'missing' (the value is never exposed), "
+                     "reply_enabled, last_poll_ts, last_error}.")
+def slack_status():
+    return slack_feed.slack_status()
 
 
 @app.get("/health",

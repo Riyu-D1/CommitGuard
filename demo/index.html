@@ -90,7 +90,7 @@
 
 <script>
 const $ = id => document.getElementById(id);
-let lastResult = null, debounce = null;
+let lastResult = null, debounce = null, currentCtx = "outgoing_email";
 
 async function api(path, method="GET", body=null) {
   const r = await fetch(path, {method, headers:{"Content-Type":"application/json"},
@@ -108,7 +108,7 @@ async function loadScenarios() {
   for (const [key, sc] of Object.entries(s)) {
     const b = document.createElement("button");
     b.textContent = sc.label;
-    b.onclick = () => { $("body").value = sc.text; verify(); };
+    b.onclick = () => { $("body").value = sc.text; currentCtx = sc.context_type || "outgoing_email"; verify(); };
     $("scenarios").appendChild(b);
   }
 }
@@ -125,7 +125,7 @@ async function verify() {
   const text = $("body").value.trim();
   if (!text) { reset(); return; }
   $("dot").className = "dot spin"; $("statusText").textContent = "checking against company brain...";
-  const res = await api("/verify-context", "POST", {text, context_type:"outgoing_email"});
+  const res = await api("/verify-context", "POST", {text, context_type: currentCtx});
   lastResult = res;
   $("engine").textContent = "engine: " + res.meta.engine;
   $("latency").textContent = res.meta.latency_ms + "ms · " + res.meta.checks_run + " checks";

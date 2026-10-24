@@ -28,7 +28,7 @@ Open http://127.0.0.1:8000 → 4 scenario buttons work = ready.
 ## Clock
 
 - **11:15** — Riyansh registers Finance/Ops track
-- **12:30** — Riyansh decides: real plugin vs demo-only
+- **12:30** — Riyansh decides: real plugin vs demo-only. Ladder: plugin+backend → **plugin with rules.js+brain inlined** (if fetch is sandboxed) → badge→demo → demo/index.html → video
 - **~14:00** — Pranali records backup video
 - **14:30** — rehearse pitch
 - **15:30** — freeze: demo-blockers only

@@ -64,3 +64,10 @@ Host APIs (Riyansh fills these): entry file=[SDK] · read draft text=[SDK] · ap
 Create plugin/ files per the SDK's expected structure: same violation-card UI as the simulator, calls adapter.verifyContext on draft change (debounced 400ms), CRITICAL result blocks send.
 VERIFY: loads in the host OR passes their validator — screenshot to Riyansh.
 ```
+
+**If the plugin sandbox blocks `fetch` to localhost** — paste this instead:
+
+```
+The Lightfern plugin runtime can't reach localhost. Port the deterministic engine into the plugin itself: create plugin/rules.js — a JS port of backend/rules.py's 8 checks (same regexes, same evidence/span/fix fields), and inline backend/company_brain.json as a JS object. The plugin then calls runRules(draftText, brain) directly — zero backend dependency. Keep violation JSON shape identical to CONTRACT.md.
+VERIFY: run plugin/rules.js against the 4 scenario texts (from backend/scenarios.json) in node — same violations as the Python engine.
+```

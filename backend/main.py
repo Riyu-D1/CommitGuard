@@ -14,14 +14,71 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 import rules
 import actions
 import slack_feed
-from llm_enrich import llm_enrich, llm_enabled
+from llm_enrich import llm_enrich, llm_enabled, llm_polish_answer
+
+try:
+    from rules import explain_policy, policy_cards
+except ImportError:
+    # FALLBACK: delete when darsh/onboarding merges — tiny keyword search
+    # over brain keys/values returning the same shapes.
+    import re as _re
+
+    _ASK_STOPWORDS = {
+        "what", "whats", "does", "have", "with", "from", "this", "that",
+        "there", "their", "they", "them", "then", "than", "when", "where",
+        "which", "your", "yours", "about", "would", "could", "should",
+        "tell", "know", "much", "many", "want", "give", "some", "into",
+        "will", "shall", "must", "also", "been", "being", "were",
+    }
+
+    def explain_policy(question: str, brain: dict) -> dict:
+        words = [w for w in _re.findall(r"[a-z0-9]+", question.lower())
+                 if len(w) >= 4 and w not in _ASK_STOPWORDS]
+        hits = []
+
+        def _walk(node, path):
+            if isinstance(node, dict):
+                for k, v in node.items():
+                    _walk(v, f"{path}.{k}" if path else k)
+            elif isinstance(node, list):
+                for i, v in enumerate(node):
+                    _walk(v, f"{path}[{i}]")
+            else:
+                hay = f"{path} {node}".lower().replace("_", " ")
+                if any(_re.search(rf"\b{_re.escape(w)}\b", hay) for w in words):
+                    hits.append({"brain_key": path, "value": node})
+
+        _walk(brain, "")
+        if not hits:
+            return {"answer": "Not in the company brain yet. Ask "
+                              "#finance-approvals",
+                    "sources": [], "matched": False}
+        sources = hits[:3]
+        listing = "; ".join(f"{s['brain_key']} = {s['value']}"
+                            for s in sources)
+        return {"answer": f"From the company brain: {listing}.",
+                "sources": sources, "matched": True}
+
+    def policy_cards(brain: dict) -> list:
+        cards = []
+        for key, val in brain.items():
+            if isinstance(val, dict):
+                for k, v in val.items():
+                    cards.append({"title": f"{key}.{k}", "rule": str(v),
+                                  "brain_key": f"{key}.{k}",
+                                  "example_violation": ""})
+            elif isinstance(val, list) and val:
+                cards.append({"title": key, "rule": f"{len(val)} entries",
+                              "brain_key": key, "example_violation": ""})
+        return cards
 
 BASE = Path(__file__).parent
 BRAIN_PATH = BASE / "company_brain.json"
 
 @asynccontextmanager
 async def lifespan(_app):
-    slack_feed.start(verify_fn=_verify, scenarios=SCENARIOS)
+    slack_feed.start(verify_fn=_verify, scenarios=SCENARIOS,
+                     ask_fn=_ask_brain)
     yield
 
 
@@ -74,6 +131,10 @@ class ActionRequest(BaseModel):
 class InjectRequest(BaseModel):
     text: str
     user: Optional[str] = None
+
+
+class AskRequest(BaseModel):
+    question: str
 
 
 class LearnRequest(BaseModel):
@@ -170,6 +231,47 @@ def verify_batch(req: VerifyBatchRequest):
         if err:
             return err
     return {"results": [_verify(it.text, it.context_type) for it in req.items]}
+
+
+def _ask_brain(question: str) -> dict:
+    """Shared ask-the-brain logic for POST /ask and Slack questions.
+    Deterministic first; if OPENAI_API_KEY is set the answer is rephrased
+    in friendlier words (sources untouched), failing open."""
+    t0 = time.time()
+    out = explain_policy(question, COMPANY_BRAIN)
+    engine = "rules"
+    if out.get("matched"):
+        polished = llm_polish_answer(question, out["answer"])
+        if polished:
+            out = {**out, "answer": polished}
+            engine = "rules+llm"
+    return {**out,
+            "meta": {"engine": engine,
+                     "latency_ms": round((time.time() - t0) * 1000, 1)}}
+
+
+@app.post("/ask",
+          summary="Ask the company brain a question (the onboarding test)",
+          description="A new hire asks 'what are the rules?' in plain English "
+                      "and gets a sourced answer: every reply cites the "
+                      "brain keys it came from. matched=false means the brain "
+                      "doesn't cover it yet — a human can teach it via /learn.")
+def ask(req: AskRequest):
+    q = (req.question or "").strip()
+    if not (3 <= len(q) <= 300):
+        return JSONResponse(
+            status_code=422,
+            content={"error": "question must be 3-300 characters"})
+    return _ask_brain(q)
+
+
+@app.get("/brain/policies",
+         summary="Policy cards generated from the brain",
+         description="One card per policy family — title, rule text, the "
+                     "brain_key it cites, and an example violation. Powers "
+                     "the dashboard's brain panel.")
+def brain_policies():
+    return policy_cards(COMPANY_BRAIN)
 
 
 @app.post("/execute-action",

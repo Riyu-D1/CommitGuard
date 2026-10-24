@@ -116,3 +116,34 @@ def llm_enrich(text: str, context_type: str, violations: list, brain: dict) -> O
         return {"violations": survivors, "full_rewrite": data.get("full_rewrite")}
     except Exception:
         return None
+
+
+POLISH_PROMPT = (
+    "You are CommitGuard's onboarding helper. Rephrase the policy answer "
+    "into one or two friendly sentences for a new hire. Keep every fact, "
+    "number, and threshold exactly as stated — never invent rules."
+)
+
+
+def llm_polish_answer(question: str, answer: str) -> Optional[str]:
+    """Optional friendly rephrase of a brain answer for /ask. Sources are
+    never touched. Fails open like llm_enrich: any problem -> None."""
+    try:
+        client = _get_client()
+        if client is None:
+            return None
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            temperature=0.3,
+            timeout=4,
+            messages=[
+                {"role": "system", "content": POLISH_PROMPT},
+                {"role": "user", "content":
+                    f"New hire's question: {question}\n\n"
+                    f"Brain answer to rephrase: {answer}"},
+            ],
+        )
+        text = (resp.choices[0].message.content or "").strip()
+        return text or None
+    except Exception:
+        return None

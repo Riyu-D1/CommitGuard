@@ -1,32 +1,72 @@
 # CommitGuard
 
-**The pre-send firewall for the company brain.** Nothing leaves the company that the
-brain can't back up.
+CommitGuard watches your team's Slack and stops messages that break company
+policy, citing the company brain, and learns new rules when a human
+corrects it.
 
 Built for the Lightfern Company Brain Buildathon — Finance/Ops track.
+
+## How it works
+
+```mermaid
+flowchart LR
+    slack[Slack channel] --> poll[CommitGuard poller]
+    poll --> engine[Deterministic rules engine]
+    brain[(company brain<br/>company_brain.json)] --> engine
+    poll -->|"? / ask: / @bot"| ask[Ask-the-brain]
+    brain --> ask
+    engine -->|violations + cited evidence| reply[Threaded Block Kit reply]
+    ask -->|sourced answer| reply
+    engine --> dash[Dashboard · /feed · audit log]
+    ask --> dash
+    reply -->|human override: "you missed this"| learn[/learn]
+    learn -->|learned_rules, enforced immediately| brain
+```
 
 ## Quickstart
 
 ```bash
-cd backend
-uv venv --python 3.12 && uv pip install -r requirements.txt
-export OPENAI_API_KEY=...        # optional — works fully without it
-uv run uvicorn main:app --port 8000
+cp backend/.env.example backend/.env   # Slack tokens optional — no .env = simulated mode
+scripts/run_demo.sh                    # API + dashboard on 127.0.0.1:8000
+open http://127.0.0.1:8000             # the dashboard
 ```
 
-- Demo UI: http://127.0.0.1:8000 (use 127.0.0.1 — some Macs resolve `localhost` to IPv6 where uvicorn doesn't listen)
-- Smoke test (offline): `cd backend && uv run python smoke_test.py`
-- Or one command: `./start.sh`
+Works fully offline with every token unset. Use `127.0.0.1`, not
+`localhost` — some Macs resolve `localhost` to IPv6 where uvicorn doesn't
+listen.
+
+## Judging criteria → where it lives
+
+| Criterion | What we built | Where |
+|---|---|---|
+| **Onboarding test** | A new hire asks `? can I give a 20% discount?` in Slack (or `POST /ask`) and gets a plain-English answer that cites the exact brain keys it came from | `POST /ask`, `GET /brain/policies`, Slack question replies in `slack_feed.py` |
+| **Structured + unstructured** | Free-text messages checked against the structured brain — contracts, pricing floors, approval limits, trusted sender domains — every violation cites `brain_key`, expected vs found | `rules.py`, `company_brain.json` |
+| **Brain and hands** | The brain decides; the hands act: `STAGE_INVOICE` queues payments for Round Treasury, `ESCALATE_FRAUD`, `APPLY_REWRITE_AND_LOG`, and every check lands in an append-only audit trail | `actions.py`, `POST /execute-action` |
+| **Learns and updates itself** | "You missed this" on any feed item teaches a `learned_rules` entry that's enforced by the deterministic engine from the next request | `POST /learn`, `POST /feed/{id}/override` |
+
+Detection is deterministic — regex + dictionary checks against the brain in
+under 5ms, fully offline (see `backend/bench.py`). An optional OpenAI layer
+polishes wording only; it can never flip a verdict.
+
+## Verify it yourself
+
+```bash
+cd backend && uv run python smoke_test.py    # prints ALL PASS
+curl -X POST http://127.0.0.1:8000/ask \
+  -H 'Content-Type: application/json' \
+  -d '{"question": "who approves a £7,000 spend?"}'
+```
 
 ## Repo map
 
 | Path | Owner | What |
 |---|---|---|
-| `backend/rules.py` `actions.py` `company_brain.json` `scenarios.json` `smoke_test.py` `bench.py` `seed_audit.py` | Darsh | Deterministic engine + action handlers + brain data + tests |
-| `backend/main.py` `llm_enrich.py` | Riyansh | FastAPI orchestration + optional OpenAI stage (fail-open) |
+| `backend/rules.py` `actions.py` `company_brain.json` `scenarios.json` `smoke_test.py` `bench.py` `seed_audit.py` `onboarding.py` | Darsh | Deterministic engine + action handlers + brain data + tests |
+| `backend/main.py` `llm_enrich.py` `slack_feed.py` `scripts/` | Riyansh | FastAPI orchestration, optional OpenAI stage (fail-open), Slack feed + questions, demo scripts |
 | `demo/` `plugin/` `pitch/` | Pranali | All frontend: demo UI, Inspector, simulator/plugin, pitch assets |
 | `team/` | all | Per-person phase plans + agent prompts (`team/riyansh`, `team/darsh`, `team/pranali`) |
 | `TOMORROW.md` | shared | **Day-of runbook — the only doc you need open** |
 | `CONTRACT.md` | shared | API contract — read before coding |
+| `E2E.md` | shared | Live-Slack demo runbook |
 | `TEAM_PLAN.md` | shared | Timeline, merge checkpoints, stretch queue |
 | `PLAYBOOK.md` | shared | Strategy, judges, narrative |

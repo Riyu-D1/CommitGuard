@@ -63,6 +63,39 @@ Client rules:
 - Every action appends to `backend/audit_log.jsonl`.
 
 ## GET /brain → the company_brain.json object
+## GET /brain/policies → policy cards generated from the brain (dashboard brain panel)
+
+**Response** — array of cards:
+```json
+[{ "title": "Discount cap",
+   "rule": "Discounts above 10% need approval in #finance-approvals.",
+   "brain_key": "financial_rules.max_unapproved_discount_percent",
+   "example_violation": "Promising a 15% discount without sign-off." }]
+```
+
+## POST /ask — ask the brain a question (the onboarding test)
+
+**Request**
+```json
+{ "question": "string, 3-300 chars after trimming" }
+```
+
+**Response**
+```json
+{ "answer": "plain-English answer grounded in the brain",
+  "sources": [{ "brain_key": "financial_rules.max_unapproved_discount_percent",
+                "value": 10 }],
+  "matched": true,
+  "meta": { "engine": "rules | rules+llm", "latency_ms": 1.2 } }
+```
+
+- `matched: false` → `answer` says it's not in the company brain yet and
+  `sources` is empty — a human can teach it via `POST /learn`.
+- `422 {"error": ...}` when question is missing, or under 3 / over 300 chars.
+- With `OPENAI_API_KEY` set the `answer` wording may be LLM-polished
+  (`meta.engine: "rules+llm"`); `sources` and `matched` always come from the
+  deterministic brain lookup and are never touched by the LLM.
+
 ## POST /brain/reload → re-read company_brain.json from disk (live-brain demo trick; 422 keeps old brain)
 
 ## Learning ("you missed this" → new rule)
@@ -111,6 +144,16 @@ so the demo works offline. Every item also appends to
 `backend/feed_log.jsonl` (gitignored) and writes a `FEED_CHECK`
 row to the audit trail. The token is never returned or logged.
 
+**Questions are not checked.** A message starting with `?` or `ask:`
+(case-insensitive), or mentioning the bot user (`<@BOT_ID>`), is treated as
+a question: it's answered via the same logic as `POST /ask` (deterministic
+brain lookup, optional LLM rewording), logged as a feed item with
+`kind: "question"`, audited as `FEED_ASK`, and — when `SLACK_REPLY=1` —
+answered in the thread with Block Kit: the answer, plus one
+`Source: <brain_key> = <value>` context line per cited source. Unmatched
+questions say the brain doesn't cover it yet. Everything else gets
+`kind: "check"` and the normal verify pipeline.
+
 Env vars may be set in the real environment or in `backend/.env`
 (gitignored; stdlib parser, real env wins — see `backend/.env.example`).
 Slack writes honor the API's 429 `Retry-After` header; bot/subtype/own
@@ -126,9 +169,12 @@ messages are ignored so the monitor can't loop on itself.
 
 ### GET /feed?since=<id>&limit=50
 Newest-first array of feed items; `since` returns only items with `id > since`.
+
+Check items (`kind: "check"` — the default):
 ```json
 {
-  "id": 12, "ts": "ISO-8601 UTC", "source": "slack | simulated | manual",
+  "id": 12, "ts": "ISO-8601 UTC", "kind": "check",
+  "source": "slack | simulated | manual",
   "channel": "C… | null", "user": "U… | label | null", "text": "...",
   "status": "CLEAN | VIOLATION_DETECTED", "risk_level": "LOW|MEDIUM|HIGH",
   "violations": [ ...same shape as /verify-context... ],
@@ -137,14 +183,38 @@ Newest-first array of feed items; `since` returns only items with `id > since`.
 }
 ```
 
+Question items (`kind: "question"`) carry the ask result instead of a
+verdict:
+```json
+{
+  "id": 13, "ts": "ISO-8601 UTC", "kind": "question",
+  "source": "slack | manual",
+  "channel": "C… | null", "user": "U… | null",
+  "text": "? can I give a 20% discount?",
+  "question": "can I give a 20% discount?",
+  "status": "QUESTION", "risk_level": "LOW", "violations": [],
+  "answer": "Discounts are capped at 10% — anything bigger needs approval.",
+  "sources": [{ "brain_key": "financial_rules.max_unapproved_discount_percent",
+                "value": 10 }],
+  "matched": true,
+  "suggested_rewrite": null, "advisories": [],
+  "meta": { "engine": "rules | rules+llm", "latency_ms": 0.8 }
+}
+```
+Items written before `kind` existed have no `kind` — treat missing as
+`"check"`.
+
 ### GET /feed/stats
-`{ total, flagged, critical, clean, by_category: {CATEGORY: n}, last_ts, mode,
-learned }` — `learned` is the number of rules in `brain.learned_rules`.
+`{ total, flagged, critical, clean, questions, by_category: {CATEGORY: n},
+last_ts, mode, learned }` — `questions` counts `kind: "question"` items
+(excluded from flagged/clean); `learned` is the number of rules in
+`brain.learned_rules`.
 
 ### POST /feed/inject
 `{ "text": "...", "user": "optional" }` → runs the same verify pipeline
 (context_type `slack_message`), stores it with `source: "manual"`, returns the
-feed item. 422 on empty text.
+feed item. A `?`/`ask:` text is answered, not checked (`kind: "question"`).
+422 on empty text.
 
 ### POST /feed/{id}/override
 Human verdict on a feed item — the "you missed this" teaching path.

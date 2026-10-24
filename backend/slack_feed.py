@@ -13,6 +13,13 @@ also gets one threaded Block Kit warning and a clean message a single ✅
 reaction; bot/subtype/own messages are ignored so the monitor never loops
 on its own posts. The token value is never logged or returned — only the
 string "set" or "missing".
+
+Questions: a channel message starting with "?" or "ask:" (case-insensitive),
+or mentioning the bot user, is a QUESTION — it isn't run through the rules
+engine. It's answered from the brain via the injected ask_fn (same logic as
+POST /ask), logged as a feed item with kind="question", and — in reply mode —
+gets a threaded Block Kit answer citing each source brain_key. Everything
+else is a compliance check with kind="check".
 """
 
 import json
@@ -83,16 +90,31 @@ _verify = None      # injected by main at startup
 _scenarios = []     # [(key, scenario_dict), ...]
 _started = False
 _bot_user_id = None  # from auth.test — our own messages are always ignored
+_ask = None          # injected by main — same logic as POST /ask
 
 
-def start(verify_fn, scenarios) -> None:
+def _parse_question(text):
+    """If `text` is an ask ("?…", "ask:…" case-insensitive, or an @bot
+    mention), return the bare question string; otherwise None."""
+    t = (text or "").strip()
+    if t.startswith("?"):
+        return t[1:].strip() or None
+    if t[:4].lower() == "ask:":
+        return t[4:].strip() or None
+    if _bot_user_id and f"<@{_bot_user_id}>" in t:
+        return t.replace(f"<@{_bot_user_id}>", "").strip() or None
+    return None
+
+
+def start(verify_fn, scenarios, ask_fn=None) -> None:
     """Called once from main's lifespan. Non-blocking: spawns a daemon thread."""
-    global _verify, _scenarios, _started, _last_ts
+    global _verify, _scenarios, _started, _last_ts, _ask
     if _started:
         return
     _started = True
     _verify = verify_fn
     _scenarios = list(scenarios.items())
+    _ask = ask_fn
     if MODE == "slack":
         _last_ts = str(time.time())  # tail -f: only messages posted after startup
         threading.Thread(target=_slack_loop, daemon=True, name="cg-slack-poll").start()
@@ -108,23 +130,50 @@ def start(verify_fn, scenarios) -> None:
 
 def _push(text, source, user=None, channel=None,
           context_type="slack_message", slack_ts=None) -> dict:
-    """Run one message through the verify pipeline and record it as a feed item."""
+    """Run one message through the verify pipeline and record it as a feed
+    item — unless it's a question (?/ask:/@bot), which is answered from the
+    brain instead of checked."""
     global _next_id
-    res = _verify(text, context_type)
-    item = {
-        "ts": datetime.now(timezone.utc).isoformat(),
-        "source": source,
-        "channel": channel,
-        "user": user,
-        "text": text,
-        "context_type": context_type,
-        "status": res["status"],
-        "risk_level": res["risk_level"],
-        "violations": res["violations"],
-        "suggested_rewrite": res["suggested_rewrite"],
-        "advisories": res["advisories"],
-        "meta": res["meta"],
-    }
+    question = (_parse_question(text)
+                if source in ("slack", "manual") and _ask is not None else None)
+    if question is not None:
+        res = _ask(question)
+        item = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "kind": "question",
+            "source": source,
+            "channel": channel,
+            "user": user,
+            "text": text,
+            "context_type": context_type,
+            "question": question,
+            "status": "QUESTION",
+            "risk_level": "LOW",
+            "violations": [],
+            "answer": res["answer"],
+            "sources": res.get("sources") or [],
+            "matched": bool(res.get("matched")),
+            "suggested_rewrite": None,
+            "advisories": [],
+            "meta": res.get("meta") or {},
+        }
+    else:
+        res = _verify(text, context_type)
+        item = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "kind": "check",
+            "source": source,
+            "channel": channel,
+            "user": user,
+            "text": text,
+            "context_type": context_type,
+            "status": res["status"],
+            "risk_level": res["risk_level"],
+            "violations": res["violations"],
+            "suggested_rewrite": res["suggested_rewrite"],
+            "advisories": res["advisories"],
+            "meta": res["meta"],
+        }
     if slack_ts:
         item["slack_ts"] = slack_ts
     with _lock:
@@ -144,6 +193,17 @@ def _push(text, source, user=None, channel=None,
 
 def _audit(item: dict) -> None:
     try:
+        if item.get("kind") == "question":
+            actions.audit({
+                "action_type": "FEED_ASK",
+                "payload": {
+                    "source": item["source"], "channel": item["channel"],
+                    "user": item["user"], "text": item["text"],
+                    "question": item["question"],
+                },
+                "result": "answered" if item.get("matched") else "unmatched",
+            })
+            return
         actions.audit({
             "action_type": "FEED_CHECK",
             "payload": {
@@ -292,6 +352,41 @@ def build_blocks(item: dict) -> list:
     return blocks
 
 
+def build_question_blocks(item: dict) -> list:
+    """Block Kit payload for a question feed item: the brain's answer, then
+    one 'Source: <brain_key> = <value>' context line per cited source.
+    Unmatched questions say the brain doesn't cover it yet."""
+    answer = item.get("answer") or "Not in the company brain yet."
+    blocks = [{
+        "type": "header",
+        "text": {"type": "plain_text", "emoji": True,
+                 "text": "💡 CommitGuard answer"},
+    }, {
+        "type": "section",
+        "text": {"type": "mrkdwn", "text": answer},
+    }]
+    if not item.get("matched"):
+        blocks.append({"type": "context", "elements": [{"type": "mrkdwn",
+            "text": "Not in the company brain yet — a human can teach it "
+                    "with a correction."}]})
+    for s in item.get("sources") or []:
+        val = str(s.get("value"))
+        if len(val) > 300:
+            val = val[:300] + "…"
+        blocks.append({"type": "context", "elements": [{"type": "mrkdwn",
+            "text": f"Source: `{s.get('brain_key')}` = {val}"}]})
+    return blocks
+
+
+def _post_question_reply(item: dict) -> None:
+    data = _slack_request("chat.postMessage", payload={
+        "channel": item["channel"], "thread_ts": item["slack_ts"],
+        "text": item.get("answer") or "CommitGuard answer",
+        "blocks": build_question_blocks(item)})
+    if not data.get("ok"):
+        log.warning("chat.postMessage failed: %s", data.get("error"))
+
+
 def _post_reply(item: dict) -> None:
     n = len(item["violations"])
     icon = _alert_icon(item)
@@ -320,11 +415,14 @@ def _react_clean(item: dict) -> None:
 def _maybe_reply(item: dict) -> None:
     """Active mode (SLACK_REPLY=1, slack-sourced items only): a flagged
     message gets one threaded Block Kit warning; a clean message gets only
-    a ✅ reaction — never a thread reply, so the channel isn't spammed."""
+    a ✅ reaction — never a thread reply, so the channel isn't spammed.
+    A question gets a threaded Block Kit answer citing its brain sources."""
     if not (SLACK_REPLY and item.get("source") == "slack" and item.get("slack_ts")):
         return
     try:
-        if item["status"] == "VIOLATION_DETECTED" and item["violations"]:
+        if item.get("kind") == "question":
+            _post_question_reply(item)
+        elif item["status"] == "VIOLATION_DETECTED" and item["violations"]:
             _post_reply(item)
         else:
             _react_clean(item)
@@ -426,8 +524,11 @@ def get_stats() -> dict:
     with _lock:
         items = list(_feed)
     by_category = {}
-    flagged = critical = clean = 0
+    flagged = critical = clean = questions = 0
     for i in items:
+        if i.get("kind", "check") == "question":
+            questions += 1
+            continue
         if i["status"] == "VIOLATION_DETECTED":
             flagged += 1
         else:
@@ -437,7 +538,8 @@ def get_stats() -> dict:
         for v in i["violations"]:
             by_category[v["category"]] = by_category.get(v["category"], 0) + 1
     return {"total": len(items), "flagged": flagged, "critical": critical,
-            "clean": clean, "by_category": by_category,
+            "clean": clean, "questions": questions,
+            "by_category": by_category,
             "last_ts": items[-1]["ts"] if items else None, "mode": MODE,
             "learned": _learned_rules_count()}
 

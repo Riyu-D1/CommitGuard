@@ -10,6 +10,8 @@ git checkout -b pranali/phase<N> && git add -A && git commit -m "phase <N>" && g
 
 **Your folders:** `demo/` · `plugin/` · `pitch/` — never touch `backend/`.
 **Errors:** screenshot + paste to Riyansh. Never debug code yourself.
+**If the AI claims done but a VERIFY fails, or stops mid-task, reply with exactly:**
+`Continue — complete every remaining numbered item, then re-check.`
 **Want different demo wording?** Write the text, hand it to Darsh — `backend/scenarios.json` is his file.
 
 ---
@@ -34,11 +36,17 @@ TASK — elevate the UI to product-quality while keeping every existing behavior
 
 3. SPAN HIGHLIGHTS — when violations carry span{start,end}, render a read-only preview under the compose box with those ranges underlined in the severity color (squiggly or solid underline + tooltip with the category).
 
-4. STATES — compose area border pulses red on CRITICAL; CLEAN shows a green check + "Clear to send" state; Send button enabled ONLY when status is CLEAN (CRITICAL shows it blocked with a lock icon); backend unreachable (fetch throws) → persistent "backend offline — checks unavailable" banner + health dot turns red.
+4. STATES — compose area border pulses red on CRITICAL; CLEAN shows a green check + "Clear to send" state; Send button enabled ONLY when status is CLEAN — on any violation Send is disabled and the existing "Send anyway" override path shows instead (disabled when CRITICAL). Keep this exact send/override logic. Backend unreachable (fetch throws) → persistent "backend offline — checks unavailable" banner + health dot turns red.
 
-5. ACTIONS — buttons: "Apply all fixes" (uses top-level suggested_rewrite), "Escalate to CFO" (ESCALATE_FRAUD), "Stage in Round" (STAGE_INVOICE, only on invoice context), "Send" (SEND_APPROVED), "Override" (APPROVE_OVERRIDE — prompts for a reason first). Every successful action → toast notification bottom-right, auto-dismiss ~3s, dark style with accent border.
+5. ACTIONS — keep every existing button behavior, ensure buttons exist for: "Apply all fixes" (applies top-level suggested_rewrite — keep any APPLY_REWRITE_AND_LOG logging it already does), "Escalate to CFO" (ESCALATE_FRAUD), "Stage in Round" (STAGE_INVOICE, only on invoice context), "Send" (SEND_APPROVED), "Send anyway" (APPROVE_OVERRIDE — must prompt for a reason first). Every successful action → toast notification bottom-right, auto-dismiss ~3s, dark style with accent border.
 
 6. DETAILS — Cmd/Ctrl+Enter triggers verify; scenario buttons show active state; top bar shows product name "CommitGuard" + a live health dot (GET /health every 15s, green=rules, blue=rules+llm, red=offline) + latency from meta after each verify; "Open Inspector" link top-right → /inspector.html.
+
+WORKING RULES — follow exactly:
+- Read demo/index.html completely BEFORE editing it.
+- Work the numbered items IN ORDER and complete ALL of them — if one is already implemented, confirm it matches this spec and move on.
+- Never silently skip an item — if truly blocked, stop and output "STOPPED AT ITEM <n>: <reason>".
+- DONE WHEN: every item is complete, the page loads with zero console errors, and all 4 scenario buttons still work. Before finishing, re-check each numbered item against your changes. Partial completion is a failure.
 
 VERIFY — tell me exactly what to click; I will open http://127.0.0.1:8000, click all 4 scenario buttons, use every action button, and check the browser console has zero errors.
 ```
@@ -54,6 +62,12 @@ TASK — restyle both to match demo/index.html (read it first and reuse its desi
 
 1. demo/inspector.html — the compliance console. It shows the company brain (GET /brain) as readable grouped cards (financial_rules, signed_contracts with IBANs masked like GB29••••5689, engineering_status, people, known_sender_domains), a live audit trail (GET /audit-log?limit=20, auto-refresh every 4s, newest first, each row showing action_type + result + timestamp in monospace), and a health header (GET /health every 15s — engine mode, check count, green/red dot). Add a "← Back to demo" link. Keep ALL fetch calls and JS logic identical — only CSS/layout changes.
 2. plugin/simulator.html — the plugin-UX mock: same restyle. Its JS calls plugin/adapter.js — keep every adapter call, element ID, and event handler byte-for-byte identical.
+
+WORKING RULES — follow exactly:
+- Read demo/index.html, demo/inspector.html, and plugin/simulator.html completely BEFORE editing.
+- Complete BOTH files — do not restyle one and skip the other.
+- Never silently skip an item — if truly blocked, stop and output "STOPPED AT ITEM <n>: <reason>".
+- DONE WHEN: both pages render with the demo's design tokens and zero console errors. Partial completion is a failure.
 
 VERIFY: I will open http://127.0.0.1:8000/inspector.html (brain cards + live audit rows visible) and plugin/simulator.html — both must look like the same product family as the demo, zero console errors.
 ```
@@ -74,6 +88,11 @@ TASK — polish all four to submission quality:
 3. pitch/one-pager.html — printable A4 portrait judge handout (light theme, system fonts, prints cleanly, no external assets): product name + one-liner, 3 bullet "what it catches", mini diagram text flow (draft → rules → brain → verdict), the £41M stat, "rules engine, not a black-box model" differentiator, audit-trail receipt mention, QR-less link text 127.0.0.1:8000. Must fit ONE page in print preview — trim content until it does.
 
 4. pitch/rehearsal-sheet.md — run-of-show: the 4-scenario click order, one judge-facing line per step, the fallback line if wifi/API fails ("everything you're seeing runs locally — no network needed"), the two hardest judge questions with their answers (Q: "why not just an LLM?" A: auditable, deterministic, offline, <5ms — LLM is optional enrichment. Q: "doesn't Round already do fraud checks?" A: Round catches it in the ledger; we catch it at the keyboard before it enters the system).
+
+WORKING RULES — follow exactly:
+- Read all four existing files BEFORE editing — polish them, do not rewrite from scratch.
+- Complete ALL four artifacts — do not skip one because it looks "fine already".
+- DONE WHEN: submission.md ≤200 words, script ≈90 seconds, one-pager prints on 1 A4 page, rehearsal sheet covers the full run-of-show. Partial completion is a failure.
 
 VERIFY: I will print-preview one-pager.html (must be 1 page) and read submission.md aloud (under 60 seconds).
 ```
@@ -101,6 +120,7 @@ TASK: port CommitGuard into the Lightfern plugin using these host APIs (Riyansh 
 - draft-change event subscription: [SDK]
 
 Create the plugin/ files the SDK expects. Behavior: on draft change (debounce 400ms) call adapter.verifyContext(text, contextType) → render the same violation-card UI as the simulator in the host's surface → severity CRITICAL disables/intercepts send if the SDK allows, otherwise renders a blocking banner → action buttons call adapter.executeAction → "apply fix" writes the fix/suggested_rewrite back into the draft via the SDK's apply API. Backend unreachable → show "offline" state, never crash.
+DONE WHEN: every bracketed SDK API above is wired in — never stub out a listed API silently; if one doesn't exist in the SDK, output "MISSING SDK API: <name>" and stop.
 VERIFY: the plugin loads in the host OR passes their build/lint validator — screenshot or output to Riyansh.
 ```
 
@@ -110,5 +130,6 @@ VERIFY: the plugin loads in the host OR passes their build/lint validator — sc
 You are a senior engineer working in the CommitGuard repository. The Lightfern plugin sandbox blocks network access to localhost, so the deterministic engine must run INSIDE the plugin.
 
 TASK: create plugin/rules.js — a faithful JavaScript port of backend/rules.py (read that file first): same check functions, same regexes, same violation shape {category, severity, issue, correction, suggested_rewrite, evidence{brain_key,expected,found}, span{text,start,end}, fix}, same ALL_CHECKS registry, run_rules(text, brain, context_type), risk_level(), apply_fixes(). Also create plugin/brain.js exporting the contents of backend/company_brain.json as a JS object. CommonJS module.exports at the bottom so `node` can run it directly.
+DONE WHEN: the VERIFY command runs and the JS engine's categories match the Python engine's for every scenario — a partial port (missing checks) is a failure, not a fallback.
 VERIFY: run `node -e "const r=require('./plugin/rules.js');const b=require('./plugin/brain.js');const s=require('./backend/scenarios.json');for(const [k,v] of Object.entries(s))console.log(k, r.run_rules(v.text,b,v.context_type).map(x=>x.category))"` — output must match the Python engine's categories per scenario.
 ```

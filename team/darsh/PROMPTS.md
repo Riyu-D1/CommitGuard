@@ -10,6 +10,9 @@ git checkout -b darsh/phase<N> && git add -A && git commit -m "phase <N>" && git
 
 Wait for all three teammates' Phase-N PRs to merge before starting Phase N+1.
 
+**If the AI claims done but a VERIFY fails, or stops mid-task, reply with exactly:**
+`Continue — complete every remaining numbered item, then run all VERIFY commands again.`
+
 **Your files:** `backend/rules.py`, `backend/actions.py`, `backend/company_brain.json`,
 `backend/scenarios.json`, `backend/smoke_test.py`, `backend/bench.py`, `backend/seed_audit.py`
 **Never touch:** `backend/main.py`, `backend/llm_enrich.py` (Riyansh) · `demo/` `plugin/` `pitch/` (Pranali)
@@ -58,6 +61,12 @@ CONSTRAINTS:
 - Every violation carries evidence with a real brain_key — never invent brain keys
 - Keep function signatures identical to existing checks
 
+WORKING RULES — follow exactly:
+- Read every file you will modify completely BEFORE editing it.
+- Work the numbered items IN ORDER and complete ALL of them — if one is already implemented, confirm it matches this spec and move on.
+- Never silently skip an item — if truly blocked, stop and output "STOPPED AT ITEM <n>: <reason>".
+- DONE WHEN: every item is complete AND every VERIFY command produces the stated output. Before finishing, re-check each numbered item against your changes. Partial completion is a failure.
+
 VERIFY — run and paste output:
 cd backend && uv run python smoke_test.py
 Expected: 4 original scenarios produce identical results; 3 new cases fire their categories.
@@ -79,6 +88,12 @@ TASK — complete the actions layer:
 3. read_audit EXTENSION — change signature to read_audit(limit=20, type=None, result=None): when `type` is given, filter entries to that action_type; when `result` is given, filter to that result value. Both optional, applied before the limit slice. Document the new params in the docstring. NOTE: main.py currently calls read_audit(limit) only — the filters must not break that call. If HTTP query-param wiring is wanted, it belongs to Riyansh's main.py — leave a comment saying so, do not edit it.
 
 4. STAGE_INVOICE polish — the staged queue entry should include the dedupe key field "invoice_ref" (the same identifier logic) so downstream consumers can join on it.
+
+WORKING RULES — follow exactly:
+- Read every file you will modify completely BEFORE editing it.
+- Work the numbered items IN ORDER and complete ALL of them — if one is already implemented, confirm it matches this spec and move on.
+- Never silently skip an item — if truly blocked, stop and output "STOPPED AT ITEM <n>: <reason>".
+- DONE WHEN: every item is complete AND every VERIFY command produces the stated output. Before finishing, re-check each numbered item against your changes. Partial completion is a failure.
 
 VERIFY — run and paste output:
 - cd backend && uv run python smoke_test.py → all pass
@@ -120,6 +135,12 @@ TASK:
    - An unverified-claim case: text claiming "we are ISO 27001 certified" → expect UNVERIFIED_CLAIM; text saying "our SOC 2 report" → expect NO UNVERIFIED_CLAIM (it's covered)
    - The 4 original scenario results MUST stay identical.
 
+WORKING RULES — follow exactly:
+- Read every file you will modify completely BEFORE editing it.
+- Work the numbered items IN ORDER and complete ALL of them — if one is already implemented, confirm it matches this spec and move on.
+- Never silently skip an item — if truly blocked, stop and output "STOPPED AT ITEM <n>: <reason>".
+- DONE WHEN: every item is complete AND every VERIFY command produces the stated output. Before finishing, re-check each numbered item against your changes. Partial completion is a failure.
+
 VERIFY — run and paste output: cd backend && uv run python smoke_test.py — all pass.
 ```
 
@@ -135,6 +156,12 @@ TASK:
 2. backend/seed_audit.py already exists — run `uv run python seed_audit.py` once so the Inspector page's audit table has realistic entries for the demo. If missing, create it: writes ~5 varied audit entries (different action_types, results, timestamps) to backend/audit_log.jsonl.
 3. risk_score — in backend/rules.py, add a "risk_score" integer field (0–100) to every violation dict produced by _v(). Mapping: LOW=20, MEDIUM=45, HIGH=70, CRITICAL=95. Additive only — no existing fields change.
 4. OPTIONAL 5th scenario — only if steps 1–3 pass cleanly: add "slack_urgent_fraud" to backend/scenarios.json: a slack_message context text where someone urgently asks finance to update supplier bank details today → fires URGENT_PAYMENT_CHANGE CRITICAL. (This makes a 5th button appear in the demo automatically — flag it to Pranali so she can mention it.)
+
+WORKING RULES — follow exactly:
+- Read every file you will modify completely BEFORE editing it.
+- Work the numbered items IN ORDER and complete ALL of them — if one is already implemented, confirm it matches this spec and move on.
+- Never silently skip an item — if truly blocked, stop and output "STOPPED AT ITEM <n>: <reason>".
+- DONE WHEN: every item is complete AND every VERIFY command produces the stated output. Before finishing, re-check each numbered item against your changes. Partial completion is a failure.
 
 VERIFY — run and paste output: cd backend && uv run python smoke_test.py — all pass, original 4 results identical.
 ```

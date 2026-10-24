@@ -11,6 +11,9 @@ git checkout -b riyansh/phase<N> && git add -A && git commit -m "phase <N>" && g
 **Merge duty:** when all 3 Phase-N PRs are up, merge in order **Darsh → Pranali → yours**.
 Run `cd backend && uv run python smoke_test.py` after each merge.
 
+**If the AI claims done but a VERIFY fails, or stops mid-task, reply with exactly:**
+`Continue — complete every remaining numbered item, then run all VERIFY commands again.`
+
 **Your files:** `backend/main.py`, `backend/llm_enrich.py` — never touch anything else.
 **Extra:** register Finance/Ops by 11:15 · 12:30 fallback call · 15:30 freeze.
 
@@ -41,6 +44,12 @@ TASK — complete the API surface. Some of this may already exist — verify wha
 5. ERROR CONSISTENCY — every error path in this file returns a JSON body containing an "error" string field (HTTPException detail dicts that already include "error" are fine; add the field where missing).
 
 CONSTRAINTS: additive only per CONTRACT.md; no new dependencies; must run with OPENAI_API_KEY unset.
+
+WORKING RULES — follow exactly:
+- Read backend/main.py completely BEFORE editing it.
+- Work the numbered items IN ORDER and complete ALL of them — if one is already implemented, confirm it matches this spec and move on.
+- Never silently skip an item — if truly blocked, stop and output "STOPPED AT ITEM <n>: <reason>".
+- DONE WHEN: every item is complete AND every VERIFY command produces the stated output. Before finishing, re-check each numbered item against your changes. Partial completion is a failure.
 
 VERIFY — run and paste output:
 - cd backend && uv run python smoke_test.py → all 4 pass, identical results
@@ -89,6 +98,12 @@ TASK — rewrite backend/llm_enrich.py completely to this spec:
    - Return {"violations": <added violations>, "full_rewrite": <str or None>}.
    - ANY exception anywhere in this function → return None.
 
+WORKING RULES — follow exactly:
+- Read backend/llm_enrich.py and the current call site in backend/main.py completely BEFORE editing.
+- Work the numbered items IN ORDER and complete ALL of them.
+- Never silently skip an item — if truly blocked, stop and output "STOPPED AT ITEM <n>: <reason>".
+- DONE WHEN: every item is complete AND every VERIFY command produces the stated output. Before finishing, re-check each numbered item against your changes. Partial completion is a failure.
+
 VERIFY — run and paste output:
 - cd backend && env -u OPENAI_API_KEY uv run python -c "import llm_enrich; print(llm_enrich.llm_enabled())" → False, no error
 - cd backend && env -u OPENAI_API_KEY uv run python smoke_test.py → all pass
@@ -117,6 +132,12 @@ TASK — write E2E.md, a numbered verification runbook a judge or teammate can f
 6. GET / → 200 (demo UI), GET /inspector.html → 200
 7. Offline note: every step works with OPENAI_API_KEY unset — state it.
 Include the real observed outputs inline under each command.
+
+WORKING RULES — follow exactly:
+- Cover ALL 7 sections — do not stop after the curls; the execute-action and offline sections are required.
+- Never fabricate an expected output — run each command and paste what it ACTUALLY returned.
+- DONE WHEN: E2E.md exists at repo root with real outputs for every numbered section. Partial completion is a failure.
+
 VERIFY: I will run the file's commands in order — every output must match.
 ```
 

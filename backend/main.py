@@ -1,5 +1,6 @@
 import json
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import List, Optional
 
@@ -12,12 +13,20 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 import rules
 import actions
+import slack_feed
 from llm_enrich import llm_enrich, llm_enabled
 
 BASE = Path(__file__).parent
 BRAIN_PATH = BASE / "company_brain.json"
 
-app = FastAPI(title="CommitGuard", version="1.0.0")
+
+@asynccontextmanager
+async def lifespan(_app):
+    slack_feed.start(verify_fn=_verify, scenarios=SCENARIOS)
+    yield
+
+
+app = FastAPI(title="CommitGuard", version="1.0.0", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
@@ -61,6 +70,11 @@ class VerifyBatchRequest(BaseModel):
 class ActionRequest(BaseModel):
     action_type: str
     payload: dict = {}
+
+
+class InjectRequest(BaseModel):
+    text: str
+    user: Optional[str] = None
 
 
 VALID_CONTEXT_TYPES = {"outgoing_email", "slack_message", "incoming_invoice", "general"}
@@ -199,13 +213,49 @@ def scenarios():
     return SCENARIOS
 
 
+@app.get("/feed",
+         summary="Live feed of checked messages, newest first",
+         description="Every message the monitor has checked — real Slack "
+                     "messages (source=slack), offline scenario replays "
+                     "(source=simulated), or manual injections (source=manual). "
+                     "?since=<id> returns only items newer than that id; "
+                     "?limit caps the page (default 50).")
+def feed(since: Optional[int] = None, limit: int = 50):
+    return slack_feed.get_feed(since=since, limit=limit)
+
+
+@app.get("/feed/stats",
+         summary="Aggregate stats over the live feed",
+         description="{total, flagged, critical, clean, by_category, last_ts, "
+                     "mode: 'slack' | 'simulated'} — the dashboard's counter strip.")
+def feed_stats():
+    return slack_feed.get_stats()
+
+
+@app.post("/feed/inject",
+          summary="Push a message through the pipeline manually",
+          description="Runs {text} through the same verify path as "
+                      "/verify-context with context_type 'slack_message', "
+                      "records it as a feed item with source 'manual', and "
+                      "returns the item. For testing and the live demo.")
+def feed_inject(req: InjectRequest):
+    if not req.text or not req.text.strip():
+        return JSONResponse(status_code=422, content={"error": "text must be non-empty"})
+    item = slack_feed.inject(req.text, user=req.user)
+    if item is None:
+        return JSONResponse(status_code=503, content={"error": "feed pipeline not started"})
+    return item
+
+
 @app.get("/health",
          summary="Liveness and engine status",
-         description="Returns {ok, engine: 'rules' | 'rules+llm', checks, brain_keys}. "
+         description="Returns {ok, engine: 'rules' | 'rules+llm', checks, brain_keys, "
+                     "feed: {mode, channel, last_poll_ts, error?}}. "
                      "Works fully with OPENAI_API_KEY unset.")
 def health():
     return {"ok": True, "engine": "rules+llm" if llm_enabled() else "rules",
-            "checks": len(rules.ALL_CHECKS), "brain_keys": list(COMPANY_BRAIN.keys())}
+            "checks": len(rules.ALL_CHECKS), "brain_keys": list(COMPANY_BRAIN.keys()),
+            "feed": slack_feed.health_info()}
 
 
 @app.get("/inspector.html",

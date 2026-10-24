@@ -4,5 +4,6 @@ __pycache__/
 server.log
 audit_log.jsonl
 round_staging_queue.json
+feed_log.jsonl
 .env
 .DS_Store

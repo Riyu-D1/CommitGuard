@@ -511,6 +511,18 @@ def check_learned_rules(text: str, brain: dict) -> list:
 LEARNED_SEVERITIES = {"MEDIUM", "HIGH", "CRITICAL"}
 
 
+def _write_brain(brain: dict, brain_path: Path) -> None:
+    """Atomically rewrite company_brain.json (temp file + os.replace)."""
+    fd, tmp = tempfile.mkstemp(dir=brain_path.parent, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(json.dumps(brain, indent=2) + "\n")
+        os.replace(tmp, brain_path)
+    except BaseException:
+        os.unlink(tmp)
+        raise
+
+
 def add_learned_rule(rule: dict, brain_path=BRAIN_PATH) -> dict:
     """Store a runtime-added rule in company_brain.json (atomic rewrite).
 
@@ -547,16 +559,62 @@ def add_learned_rule(rule: dict, brain_path=BRAIN_PATH) -> dict:
     if rule.get("source_feed_id"):
         stored["source_feed_id"] = rule["source_feed_id"]
     learned.append(stored)
-
-    fd, tmp = tempfile.mkstemp(dir=brain_path.parent, suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w") as f:
-            f.write(json.dumps(brain, indent=2) + "\n")
-        os.replace(tmp, brain_path)
-    except BaseException:
-        os.unlink(tmp)
-        raise
+    _write_brain(brain, brain_path)
     return stored
+
+
+def add_learned_exception(rule: dict, brain_path=BRAIN_PATH) -> dict:
+    """Store a runtime exception: suppresses a category when its phrase
+    appears in the checked text. Atomic write; dedupes on (phrase, category).
+
+    Raises ValueError on bad input.
+    """
+    if not isinstance(rule, dict):
+        raise ValueError("learned exception must be an object")
+    phrase = rule.get("phrase")
+    if not isinstance(phrase, str) or not (3 <= len(phrase.strip()) <= 120):
+        raise ValueError("learned exception 'phrase' must be 3-120 characters")
+    phrase = phrase.strip()
+    category = rule.get("category")
+    if not isinstance(category, str) or not category.strip():
+        raise ValueError("learned exception 'category' is required")
+    category = category.strip()
+
+    brain_path = Path(brain_path)
+    brain = json.loads(brain_path.read_text())
+    exceptions = brain.setdefault("learned_exceptions", [])
+    for existing in exceptions:
+        if isinstance(existing, dict) and \
+                str(existing.get("phrase", "")).lower() == phrase.lower() and \
+                existing.get("category") == category:
+            return existing
+
+    stored = {
+        "id": "le_" + uuid.uuid4().hex[:8],
+        "phrase": phrase,
+        "category": category,
+        "created_ts": datetime.now(timezone.utc).isoformat(),
+    }
+    if rule.get("note"):
+        stored["note"] = rule["note"]
+    if rule.get("source_feed_id"):
+        stored["source_feed_id"] = rule["source_feed_id"]
+    exceptions.append(stored)
+    _write_brain(brain, brain_path)
+    return stored
+
+
+def _apply_exceptions(text: str, violations: list, brain: dict) -> list:
+    """Drop violations suppressed by a learned exception — fail open."""
+    low = text.lower()
+    for exc in brain.get("learned_exceptions", []):
+        try:
+            if exc["phrase"].lower() in low:
+                violations = [v for v in violations
+                              if v["category"] != exc["category"]]
+        except Exception:
+            continue
+    return violations
 
 
 ALL_CHECKS = [
@@ -610,7 +668,7 @@ def run_rules(text: str, brain: dict, context_type: Optional[str] = None) -> lis
                 and filter_ctx not in allowed:
             continue
         violations.extend(check(text, brain))
-    return violations
+    return _apply_exceptions(text, violations, brain)
 
 
 def risk_level(violations: list) -> str:

@@ -1,5 +1,7 @@
 import json
+import os
 import re
+import tempfile
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -8,7 +10,7 @@ from typing import List, Optional
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -28,15 +30,27 @@ from rules import explain_policy, policy_cards
 BASE = Path(__file__).parent
 BRAIN_PATH = BASE / "company_brain.json"
 
+PREVIEW_DIR = BASE / ".lightfern_preview"
+
+
 @asynccontextmanager
 async def lifespan(_app):
-    lightfern_bridge.start(hooks={
+    hooks = {
         "learn": _learn,
         "exception": _learn_exception,
         "override": _apply_override,
         "ask": _ask_brain,
         "import_brain": _import_brain,
-    })
+    }
+    if not lightfern_bridge.start(hooks=hooks):
+        # LIGHTFERN_APP_DIR unset — run the same bridge against a gitignored
+        # runtime copy so the /lightfern browser preview shows real live
+        # data (feed.json, status.json, inbox commands + answers).
+        try:
+            PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
+            lightfern_bridge.start(hooks=hooks, app_dir=str(PREVIEW_DIR))
+        except Exception:
+            pass
     slack_feed.start(verify_fn=_verify, scenarios=SCENARIOS,
                      ask_fn=_ask_brain, override_fn=_slack_override,
                      decision_fn=_decision_for_item,
@@ -674,6 +688,118 @@ def feed_override(feed_id: int, req: OverrideRequest):
                      "backend then behaves exactly as without the bridge.")
 def lightfern_status():
     return lightfern_bridge.status()
+
+
+# ---- Lightfern browser preview ---------------------------------------------
+# The desktop app's home.tsx runs unchanged in a browser: the host shim calls
+# these endpoints instead of the Lightfern sandbox file API. All file access
+# is confined to the bridge's app dir (LIGHTFERN_APP_DIR, else the gitignored
+# backend/.lightfern_preview/ started in lifespan).
+
+LF_APP_SRC = BASE.parent / "lightfern" / "CommitGuard Brain"
+
+
+def _lf_root() -> Path:
+    st = lightfern_bridge.status()
+    if not st.get("enabled") or not st.get("app_dir"):
+        raise HTTPException(404, {"error": "lightfern preview not enabled"})
+    return Path(st["app_dir"]).resolve()
+
+
+def _lf_resolve(rel: str) -> Path:
+    """Resolve rel inside the app dir; 400 on absolute paths / '..'
+    traversal, resolved-path check catches symlink escapes."""
+    root = _lf_root()
+    if not rel or rel.startswith("/") or rel.startswith("\\"):
+        raise HTTPException(400, {"error": "path must be relative"})
+    parts = [p for p in rel.replace("\\", "/").split("/") if p]
+    if any(p == ".." for p in parts):
+        raise HTTPException(400, {"error": "path traversal rejected"})
+    dest = (root.joinpath(*parts)).resolve()
+    if root != dest and root not in dest.parents:
+        raise HTTPException(400, {"error": "path escapes app dir"})
+    return dest
+
+
+@app.get("/lightfern",
+         summary="Lightfern app — browser preview",
+         description="Serves demo/lightfern.html: the real home.tsx bundled "
+                     "for the browser, talking to this backend via the "
+                     "/lightfern/files proxy instead of the desktop sandbox.")
+def lightfern_preview():
+    path = BASE.parent / "demo" / "lightfern.html"
+    if not path.exists():
+        raise HTTPException(404, {"error": "lightfern.html not found"})
+    return FileResponse(path)
+
+
+@app.get("/lightfern/bundle.js", include_in_schema=False)
+def lightfern_bundle():
+    path = BASE.parent / "demo" / "lightfern-bundle.js"
+    if not path.exists():
+        raise HTTPException(404, {"error": "bundle not built — run "
+                                "lightfern/dev/harness/build-preview.mjs"})
+    return FileResponse(path, media_type="text/javascript")
+
+
+@app.get("/lightfern/styles.css", include_in_schema=False)
+def lightfern_styles():
+    path = LF_APP_SRC / "code" / "styles.css"
+    if not path.exists():
+        raise HTTPException(404, {"error": "styles.css not found"})
+    return FileResponse(path)
+
+
+@app.get("/lightfern/files/{path:path}",
+         summary="Read a file (or list a dir with ?list=1) in the app dir",
+         description="ctx.files.read/list backing for the browser preview. "
+                     "Confined to the bridge app dir — '..' and absolute "
+                     "paths return 400.")
+def lightfern_file_read(path: str, list: bool = False):
+    dest = _lf_resolve(path)
+    if list or dest.is_dir():
+        if not dest.is_dir():
+            raise HTTPException(404, {"error": f"no such dir: {path}"})
+        entries = [
+            {"path": f"{path.strip('/')}/{c.name}" if path.strip("/")
+                     else c.name,
+             "name": c.name,
+             "kind": "folder" if c.is_dir() else "file"}
+            for c in sorted(dest.iterdir(), key=lambda c: c.name)
+            if not c.name.startswith(".")
+        ]
+        return entries
+    if not dest.is_file():
+        raise HTTPException(404, {"error": f"no such file: {path}"})
+    return PlainTextResponse(dest.read_text(errors="replace"))
+
+
+class _FileWrite(BaseModel):
+    content: str
+
+
+@app.post("/lightfern/files/{path:path}",
+          summary="Write a file inside the app dir",
+          description="ctx.files.write backing for the browser preview — "
+                      "inbox command files land here and the bridge drains "
+                      "them exactly like in the desktop app.")
+def lightfern_file_write(path: str, req: _FileWrite):
+    dest = _lf_resolve(path)
+    if dest.is_dir():
+        raise HTTPException(400, {"error": f"is a directory: {path}"})
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=dest.parent, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(req.content)
+        os.replace(tmp, dest)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    return {"ok": True, "path": path}
 
 
 @app.get("/slack/status",

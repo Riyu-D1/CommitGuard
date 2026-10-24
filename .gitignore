@@ -14,6 +14,9 @@ brain_changelog.jsonl
 # Lightfern dev harness — proof-only package, never shipped inside the app
 lightfern/dev/node_modules/
 lightfern/dev/harness/bundle.js
+
+# Browser-preview runtime copy of the Lightfern app dir (bridge writes here)
+backend/.lightfern_preview/
 .playwright-mcp/
 
 # Lightfern runtime artifacts (the bridge writes these at runtime)

@@ -1,4 +1,17 @@
 {
+  "company": {
+    "name": "Round Treasury Ltd",
+    "domain": "roundtreasury.io",
+    "hq": "London",
+    "currency": "GBP",
+    "customers": ["Acme Corp", "Globex", "Initech", "Umbrella Group", "Soylent Ltd"]
+  },
+  "internal_policies": {
+    "expense_approval_limit_gbp": 5000,
+    "expense_approval_note": "Any spend over £5,000 needs CFO approval first.",
+    "pricing_floor_gbp_per_seat": {"Starter": 40, "Growth": 65, "Enterprise": 110},
+    "confidential_data": "No customer names + revenue figures in public channels; never share the client list externally."
+  },
   "financial_rules": {
     "max_payment_terms": "Net-30",
     "max_unapproved_discount_percent": 10,

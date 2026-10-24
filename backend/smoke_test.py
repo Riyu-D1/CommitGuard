@@ -16,6 +16,19 @@ BASELINE = {
     "clean_email": [],
 }
 
+# Slack demo scenarios — every one is asserted (categories, order-insensitive).
+SLACK_DEMO = {
+    "slack_urgent_fraud": ["PAYMENT_REDIRECTION", "URGENT_PAYMENT_CHANGE"],
+    "slack_demo_price_floor": ["CONFIDENTIAL_LEAK", "PRICE_FLOOR"],
+    "slack_demo_expense": ["APPROVAL_REQUIRED"],
+    "slack_demo_rev_leak": ["CONFIDENTIAL_LEAK"],
+    "slack_demo_clientlist": ["CONFIDENTIAL_LEAK"],
+    "slack_demo_spend_seats": ["APPROVAL_REQUIRED", "PRICE_FLOOR"],
+    "slack_demo_clean": [],
+}
+
+EXPECTED = {**BASELINE, **SLACK_DEMO}
+
 failures = []
 
 
@@ -48,17 +61,17 @@ for key, sc in main.SCENARIOS.items():
     out = main.verify_context(main.VerifyRequest(text=sc["text"],
                                                  context_type=sc["context_type"]))
     _print_result(key, out)
-    if key not in BASELINE:
-        continue  # extra scenarios (e.g. a 5th demo case) print but don't gate
+    if key not in EXPECTED:
+        continue  # unlisted scenarios print but don't gate
     got = sorted(v["category"] for v in out["violations"])
-    if got != sorted(BASELINE[key]):
-        failures.append(f"{key}: baseline expected {sorted(BASELINE[key])}, got {got}")
+    if got != sorted(EXPECTED[key]):
+        failures.append(f"{key}: expected {sorted(EXPECTED[key])}, got {got}")
     if key == "vendor_invoice" and not any(
             v["category"] == "PAYMENT_REDIRECTION" and v["severity"] == "CRITICAL"
             for v in out["violations"]):
         failures.append("vendor_invoice: missing a CRITICAL PAYMENT_REDIRECTION")
-    if key == "clean_email" and out["status"] != "CLEAN":
-        failures.append("clean_email: status must be CLEAN")
+    if not EXPECTED[key] and out["status"] != "CLEAN":
+        failures.append(f"{key}: status must be CLEAN")
 
 # One standalone case per Phase-1 fraud rule.
 expect("rule_duplicate_invoice",

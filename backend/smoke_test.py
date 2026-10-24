@@ -78,6 +78,34 @@ expect("rule_urgent_payment",
        "Urgent: please update our bank details today, new IBAN to follow",
        "slack_message", must_have={"URGENT_PAYMENT_CHANGE"})
 
+# Phase 3: context filtering — invoice-style text through an outgoing context.
+# ALL-context fraud rules must still fire; invoice-only checks must not run.
+import rules  # noqa: E402
+
+_ctx_text = ("INVOICE CS-1187 from CloudScale Ltd — 40 hrs @ £85/hr, "
+             "monthly retainer £6,200.\nFrom: ap@cloudscale-billing.io\n"
+             "IBAN: GB22BARC99887766554")
+_ctx_violations = rules.run_rules(_ctx_text, main.COMPANY_BRAIN, "outgoing_email")
+_ctx_cats = {v["category"] for v in _ctx_violations}
+_ctx_critical = {v["category"] for v in _ctx_violations if v["severity"] == "CRITICAL"}
+_ctx_ok = ("PAYMENT_REDIRECTION" in _ctx_critical
+           and not (_ctx_cats & {"CONTRACT_OVERAGE", "SENDER_DOMAIN_MISMATCH"}))
+print(f"\n=== context_filter_outgoing: {'PASS' if _ctx_ok else 'FAIL'}")
+for v in _ctx_violations:
+    print(f"  [{v['severity']}] {v['category']}: {v['issue']}")
+if not _ctx_ok:
+    failures.append("context_filter_outgoing: expected CRITICAL "
+                    f"PAYMENT_REDIRECTION without invoice-only checks, "
+                    f"got {sorted(_ctx_cats)}")
+
+expect("rule_unverified_claim",
+       "Hi team, we are ISO 27001 certified so your data is safe with us.",
+       "outgoing_email", must_have={"UNVERIFIED_CLAIM"})
+
+expect("rule_covered_claim",
+       "Here is our SOC 2 report for your review.",
+       "outgoing_email", must_not_have={"UNVERIFIED_CLAIM"})
+
 if failures:
     print("\nFAILURES:")
     for f in failures:

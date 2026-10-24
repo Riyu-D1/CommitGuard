@@ -346,6 +346,33 @@ def check_urgent_payment_change(text: str, brain: dict) -> list:
     return []
 
 
+_CERT_CLAIM_TOKENS = (
+    "soc 2", "iso 27001", "iso27001", "hipaa", "pci dss",
+    "pci-dss", "gdpr certified", "cyber essentials",
+)
+
+
+def check_unverified_claims(text: str, brain: dict) -> list:
+    corpus = " ".join(
+        f"{i.get('feature', '')} {i.get('status', '')}"
+        for i in brain.get("engineering_status", [])
+    ).lower()
+    out = []
+    for token in _CERT_CLAIM_TOKENS:
+        m = re.search(rf"(?i)\b{re.escape(token)}\b", text)
+        if not m or token in corpus:
+            continue  # not claimed, or covered by an engineering_status entry
+        out.append(_v(
+            "UNVERIFIED_CLAIM", "MEDIUM",
+            f"'{m.group(0)}' is asserted but has no backing entry in the company brain.",
+            "Remove the claim or add an authoritative source to the brain before sending.",
+            {"brain_key": "engineering_status",
+             "expected": f"a status entry covering {m.group(0)}", "found": "no entry"},
+            span={"text": m.group(0), "start": m.start(), "end": m.end()},
+        ))
+    return out
+
+
 ALL_CHECKS = [
     check_payment_terms,
     check_discount_cap,
@@ -358,12 +385,36 @@ ALL_CHECKS = [
     check_duplicate_invoice,
     check_sender_domain,
     check_urgent_payment_change,
+    check_unverified_claims,
 ]
+
+# Which context_types each check runs in. "ALL" = fraud signatures that must
+# fire everywhere; a check absent from this map also defaults to "ALL".
+VALID_CONTEXT_TYPES = {"outgoing_email", "slack_message", "incoming_invoice", "general"}
+CONTEXTS = {
+    check_bank_details: "ALL",
+    check_duplicate_invoice: "ALL",
+    check_urgent_payment_change: "ALL",
+    check_amounts_vs_contract: {"incoming_invoice"},
+    check_sender_domain: {"incoming_invoice"},
+    check_payment_terms: {"outgoing_email", "slack_message", "general"},
+    check_discount_cap: {"outgoing_email", "slack_message", "general"},
+    check_treasury_lock: {"outgoing_email", "slack_message", "general"},
+    check_feature_claims: {"outgoing_email", "slack_message", "general"},
+    check_refund_credits: {"outgoing_email", "slack_message", "general"},
+    check_large_commitment: {"outgoing_email", "slack_message", "general"},
+    check_unverified_claims: {"outgoing_email", "slack_message", "general"},
+}
 
 
 def run_rules(text: str, brain: dict, context_type: Optional[str] = None) -> list:
     violations = []
+    filter_ctx = context_type if context_type in VALID_CONTEXT_TYPES else None
     for check in ALL_CHECKS:
+        allowed = CONTEXTS.get(check, "ALL")
+        if filter_ctx is not None and isinstance(allowed, set) \
+                and filter_ctx not in allowed:
+            continue
         violations.extend(check(text, brain))
     return violations
 

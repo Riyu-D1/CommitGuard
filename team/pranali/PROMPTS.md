@@ -47,6 +47,7 @@ WORKING RULES — follow exactly:
 - Work the numbered items IN ORDER and complete ALL of them — if one is already implemented, confirm it matches this spec and move on.
 - Never silently skip an item — if truly blocked, stop and output "STOPPED AT ITEM <n>: <reason>".
 - DONE WHEN: every item is complete, the page loads with zero console errors, and all 4 scenario buttons still work. Before finishing, re-check each numbered item against your changes. Partial completion is a failure.
+- FREEDOM: the behavior contract is exact — endpoints, request/response shapes, element IDs the JS uses, send/override logic. The visuals are strong defaults, not a ceiling: the palette, layout, and micro-interactions above describe the target feel, but you're the designer — if your judgment produces something better within the constraints (single file, fully offline, severity-coded, dense fintech-console feel), do it. Delight is welcome; note any spec deviation in your summary.
 
 VERIFY — tell me exactly what to click; I will open http://127.0.0.1:8000, click all 4 scenario buttons, use every action button, and check the browser console has zero errors.
 ```
@@ -68,6 +69,7 @@ WORKING RULES — follow exactly:
 - Complete BOTH files — do not restyle one and skip the other.
 - Never silently skip an item — if truly blocked, stop and output "STOPPED AT ITEM <n>: <reason>".
 - DONE WHEN: both pages render with the demo's design tokens and zero console errors. Partial completion is a failure.
+- FREEDOM: fetch logic and element IDs are exact; layout and styling choices are yours — matching the demo's feel is the goal, not pixel-copying it. Better ideas welcome.
 
 VERIFY: I will open http://127.0.0.1:8000/inspector.html (brain cards + live audit rows visible) and plugin/simulator.html — both must look like the same product family as the demo, zero console errors.
 ```
@@ -93,6 +95,7 @@ WORKING RULES — follow exactly:
 - Read all four existing files BEFORE editing — polish them, do not rewrite from scratch.
 - Complete ALL four artifacts — do not skip one because it looks "fine already".
 - DONE WHEN: submission.md ≤200 words, script ≈90 seconds, one-pager prints on 1 A4 page, rehearsal sheet covers the full run-of-show. Partial completion is a failure.
+- FREEDOM: the required elements, stats, and structure are exact — the writing itself is yours. If you can phrase it sharper or find a better hook, do it.
 
 VERIFY: I will print-preview one-pager.html (must be 1 page) and read submission.md aloud (under 60 seconds).
 ```
@@ -120,7 +123,7 @@ TASK: port CommitGuard into the Lightfern plugin using these host APIs (Riyansh 
 - draft-change event subscription: [SDK]
 
 Create the plugin/ files the SDK expects. Behavior: on draft change (debounce 400ms) call adapter.verifyContext(text, contextType) → render the same violation-card UI as the simulator in the host's surface → severity CRITICAL disables/intercepts send if the SDK allows, otherwise renders a blocking banner → action buttons call adapter.executeAction → "apply fix" writes the fix/suggested_rewrite back into the draft via the SDK's apply API. Backend unreachable → show "offline" state, never crash.
-DONE WHEN: every bracketed SDK API above is wired in — never stub out a listed API silently; if one doesn't exist in the SDK, output "MISSING SDK API: <name>" and stop.
+DONE WHEN: every bracketed SDK API above is wired in — never stub out a listed API silently; if one doesn't exist in the SDK, output "MISSING SDK API: <name>" and stop. Use the SDK idiomatically — if its docs suggest a better pattern than a literal port of the simulator, use it.
 VERIFY: the plugin loads in the host OR passes their build/lint validator — screenshot or output to Riyansh.
 ```
 

@@ -50,6 +50,7 @@ WORKING RULES — follow exactly:
 - Work the numbered items IN ORDER and complete ALL of them — if one is already implemented, confirm it matches this spec and move on.
 - Never silently skip an item — if truly blocked, stop and output "STOPPED AT ITEM <n>: <reason>".
 - DONE WHEN: every item is complete AND every VERIFY command produces the stated output. Before finishing, re-check each numbered item against your changes. Partial completion is a failure.
+- FREEDOM: response shapes, error bodies, function signatures, and message strings in this spec are exact (they're the product contract). Implementation details — helper organization, middleware structure, schema construction — are yours to improve. If you see a cleaner or more robust approach that passes the same VERIFY, take it, and note any spec deviation in your final summary.
 
 VERIFY — run and paste output:
 - cd backend && uv run python smoke_test.py → all 4 pass, identical results
@@ -103,6 +104,7 @@ WORKING RULES — follow exactly:
 - Work the numbered items IN ORDER and complete ALL of them.
 - Never silently skip an item — if truly blocked, stop and output "STOPPED AT ITEM <n>: <reason>".
 - DONE WHEN: every item is complete AND every VERIFY command produces the stated output. Before finishing, re-check each numbered item against your changes. Partial completion is a failure.
+- FREEDOM: response shapes, error bodies, function signatures, and message strings in this spec are exact (they're the product contract). Implementation details — helper organization, middleware structure, schema construction — are yours to improve. If you see a cleaner or more robust approach that passes the same VERIFY, take it, and note any spec deviation in your final summary.
 
 VERIFY — run and paste output:
 - cd backend && env -u OPENAI_API_KEY uv run python -c "import llm_enrich; print(llm_enrich.llm_enabled())" → False, no error
@@ -137,6 +139,7 @@ WORKING RULES — follow exactly:
 - Cover ALL 7 sections — do not stop after the curls; the execute-action and offline sections are required.
 - Never fabricate an expected output — run each command and paste what it ACTUALLY returned.
 - DONE WHEN: E2E.md exists at repo root with real outputs for every numbered section. Partial completion is a failure.
+- FREEDOM: all 7 sections are required, but add anything that makes the proof more convincing — extra edge-case curls, timing output, a troubleshooting note. More proof is better.
 
 VERIFY: I will run the file's commands in order — every output must match.
 ```

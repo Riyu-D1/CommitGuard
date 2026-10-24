@@ -66,6 +66,7 @@ WORKING RULES — follow exactly:
 - Work the numbered items IN ORDER and complete ALL of them — if one is already implemented, confirm it matches this spec and move on.
 - Never silently skip an item — if truly blocked, stop and output "STOPPED AT ITEM <n>: <reason>".
 - DONE WHEN: every item is complete AND every VERIFY command produces the stated output. Before finishing, re-check each numbered item against your changes. Partial completion is a failure.
+- FREEDOM: behaviors, category names, evidence shapes, and message strings in this spec are exact (they're the product contract). Everything else — helper structure, regex details, code organization, extra edge-case handling — is yours to improve. If you see a cleaner or more robust approach that passes the same VERIFY, take it, and note any spec deviation in your final summary.
 
 VERIFY — run and paste output:
 cd backend && uv run python smoke_test.py
@@ -94,6 +95,7 @@ WORKING RULES — follow exactly:
 - Work the numbered items IN ORDER and complete ALL of them — if one is already implemented, confirm it matches this spec and move on.
 - Never silently skip an item — if truly blocked, stop and output "STOPPED AT ITEM <n>: <reason>".
 - DONE WHEN: every item is complete AND every VERIFY command produces the stated output. Before finishing, re-check each numbered item against your changes. Partial completion is a failure.
+- FREEDOM: behaviors, category names, evidence shapes, and message strings in this spec are exact (they're the product contract). Everything else — helper structure, regex details, code organization, extra edge-case handling — is yours to improve. If you see a cleaner or more robust approach that passes the same VERIFY, take it, and note any spec deviation in your final summary.
 
 VERIFY — run and paste output:
 - cd backend && uv run python smoke_test.py → all pass
@@ -140,6 +142,7 @@ WORKING RULES — follow exactly:
 - Work the numbered items IN ORDER and complete ALL of them — if one is already implemented, confirm it matches this spec and move on.
 - Never silently skip an item — if truly blocked, stop and output "STOPPED AT ITEM <n>: <reason>".
 - DONE WHEN: every item is complete AND every VERIFY command produces the stated output. Before finishing, re-check each numbered item against your changes. Partial completion is a failure.
+- FREEDOM: behaviors, category names, evidence shapes, and message strings in this spec are exact (they're the product contract). Everything else — helper structure, regex details, code organization, extra edge-case handling — is yours to improve. If you see a cleaner or more robust approach that passes the same VERIFY, take it, and note any spec deviation in your final summary.
 
 VERIFY — run and paste output: cd backend && uv run python smoke_test.py — all pass.
 ```
@@ -162,6 +165,7 @@ WORKING RULES — follow exactly:
 - Work the numbered items IN ORDER and complete ALL of them — if one is already implemented, confirm it matches this spec and move on.
 - Never silently skip an item — if truly blocked, stop and output "STOPPED AT ITEM <n>: <reason>".
 - DONE WHEN: every item is complete AND every VERIFY command produces the stated output. Before finishing, re-check each numbered item against your changes. Partial completion is a failure.
+- FREEDOM: behaviors, category names, evidence shapes, and message strings in this spec are exact (they're the product contract). Everything else — helper structure, regex details, code organization, extra edge-case handling — is yours to improve. If you see a cleaner or more robust approach that passes the same VERIFY, take it, and note any spec deviation in your final summary.
 
 VERIFY — run and paste output: cd backend && uv run python smoke_test.py — all pass, original 4 results identical.
 ```

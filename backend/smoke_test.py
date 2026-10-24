@@ -211,6 +211,77 @@ for _name, _q, _want in [
         failures.append(f"{_name}: matched={_res['matched']} (want {_want}) "
                         f"sources_ok={_src_ok}")
 
+# darsh/hands: learned exceptions — suppress exactly one category for one
+# phrase, on a temp brain copy; the real brain file must be untouched.
+_real_brain2 = (Path(main.BASE) / "company_brain.json").read_text()
+with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as _tf:
+    _tf.write(_real_brain2)
+    _tmp_brain2 = _tf.name
+
+_exc_text = main.SCENARIOS["slack_demo_price_floor"]["text"]
+try:
+    _ex = rules.add_learned_exception(
+        {"phrase": "£85/seat", "category": "PRICE_FLOOR",
+         "note": "approved once for the Acme renewal"},
+        brain_path=_tmp_brain2)
+    _ex2 = rules.add_learned_exception(
+        {"phrase": "£85/seat", "category": "PRICE_FLOOR"},
+        brain_path=_tmp_brain2)  # same phrase+category -> same id
+    _ex_brain = json.loads(Path(_tmp_brain2).read_text())
+    _ex_brain["learned_exceptions"].append({"phrase": 123, "category": 4.5})  # bad rule
+    _sup = rules.run_rules(_exc_text, _ex_brain, "slack_message")
+    _sup_cats = {v["category"] for v in _sup}
+    _unsup = rules.run_rules(
+        "fyi the retro moved to Thursday 3pm", _ex_brain, "slack_message")
+    _exc_ok = ("PRICE_FLOOR" not in _sup_cats          # suppressed
+               and "CONFIDENTIAL_LEAK" in _sup_cats    # everything else stays
+               and _ex2["id"] == _ex["id"]             # dedupe
+               and _unsup == []                        # clean still clean
+               and (Path(main.BASE) / "company_brain.json").read_text()
+               == _real_brain2)                        # real brain untouched
+    print(f"\n=== exception_suppress: {'PASS' if _exc_ok else 'FAIL'}")
+    for v in _sup:
+        print(f"  [{v['severity']}] {v['category']}: {v['issue']}")
+    if not _exc_ok:
+        failures.append("exception_suppress: PRICE_FLOOR should be suppressed, "
+                        f"CONFIDENTIAL_LEAK kept; got {sorted(_sup_cats)}")
+finally:
+    os.unlink(_tmp_brain2)
+
+# darsh/hands: plan_actions — the brain acts, not just flags.
+import actions  # noqa: E402
+
+for _name, _key, _must, _must_not, _target_check in [
+    ("actions_invoice_fraud", "vendor_invoice",
+     {"HOLD_PAYMENT", "ESCALATE"}, set(), "ESCALATE"),
+    ("actions_expense", "slack_demo_expense",
+     {"REQUEST_APPROVAL"}, {"HOLD_PAYMENT"}, "REQUEST_APPROVAL"),
+    ("actions_clean", "clean_email", set(),
+     {"HOLD_PAYMENT", "ESCALATE", "REQUEST_APPROVAL", "BLOCK_AND_REDACT",
+      "SUGGEST_REWRITE"}, None),
+]:
+    _sc = main.SCENARIOS[_key]
+    _out = main.verify_context(main.VerifyRequest(
+        text=_sc["text"], context_type=_sc["context_type"]))
+    _plan = actions.plan_actions(_out, main.COMPANY_BRAIN)
+    _types = {a["type"] for a in _plan}
+    _ok = _must <= _types and not (_must_not & _types)
+    if _target_check == "ESCALATE":
+        _ok = _ok and any(a["type"] == "ESCALATE"
+                          and a["target"] == main.COMPANY_BRAIN["people"]["cfo"]
+                          for a in _plan)
+    if _target_check == "REQUEST_APPROVAL":
+        _ok = _ok and any(
+            a["type"] == "REQUEST_APPROVAL"
+            and a["target"] == main.COMPANY_BRAIN["people"]
+            ["finance_approval_channel"] for a in _plan)
+    print(f"\n=== {_name}: {'PASS' if _ok else 'FAIL'}")
+    for a in _plan:
+        print(f"  {a['type']}: {a['label']} (target={a['target']})")
+    if not _ok:
+        failures.append(f"{_name}: expected {sorted(_must)} actions, "
+                        f"got {sorted(_types)}")
+
 if failures:
     print("\nFAILURES:")
     for f in failures:

@@ -135,3 +135,55 @@ def execute_action(action_type: str, payload: dict, brain: dict) -> dict:
     entry = audit({"action_type": action_type, "payload": payload, "result": "ok"})
     return {"success": True, "audit_log_id": entry["audit_log_id"],
             "message": f"Processed {action_type} and wrote it to the audit trail."}
+
+
+def plan_actions(result: dict, brain: dict) -> list:
+    """Suggest next actions for a /verify-context result — pure, no side effects.
+
+    Every target comes from the brain (people.cfo, finance_approval_channel);
+    nothing is hardcoded. Deduped by action type.
+    """
+    violations = result.get("violations") or []
+    cats = {v.get("category") for v in violations}
+    crit_cats = {v.get("category") for v in violations
+                 if v.get("severity") == "CRITICAL"}
+    people = brain.get("people", {})
+    plan = {}
+
+    if crit_cats & {"PAYMENT_REDIRECTION", "URGENT_PAYMENT_CHANGE"}:
+        plan["HOLD_PAYMENT"] = {"type": "HOLD_PAYMENT",
+                                "label": "Hold payment — do not pay",
+                                "target": None,
+                                "payload": {"violations": violations}}
+        cfo = people.get("cfo")
+        plan["ESCALATE"] = {"type": "ESCALATE",
+                            "label": f"Escalate to {cfo}" if cfo else "Escalate to CFO",
+                            "target": cfo,
+                            "payload": {"violations": violations}}
+
+    if "APPROVAL_REQUIRED" in cats:
+        channel = people.get("finance_approval_channel")
+        plan["REQUEST_APPROVAL"] = {
+            "type": "REQUEST_APPROVAL",
+            "label": f"Request approval in {channel}" if channel
+                     else "Request approval",
+            "target": channel,
+            "payload": {"violations": violations}}
+
+    if "CONFIDENTIAL_LEAK" in cats:
+        plan["BLOCK_AND_REDACT"] = {
+            "type": "BLOCK_AND_REDACT",
+            "label": "Block send and redact confidential data",
+            "target": None,
+            "payload": {"violations": violations}}
+
+    if cats & {"PRICE_FLOOR", "MARGIN_BREACH"}:
+        payload = {}
+        if result.get("suggested_rewrite"):
+            payload["suggested_rewrite"] = result["suggested_rewrite"]
+        plan["SUGGEST_REWRITE"] = {"type": "SUGGEST_REWRITE",
+                                   "label": "Apply suggested rewrite",
+                                   "target": None,
+                                   "payload": payload}
+
+    return list(plan.values())
